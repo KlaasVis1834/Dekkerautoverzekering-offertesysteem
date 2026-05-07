@@ -1,0 +1,61 @@
+{% extends "base.html" %}
+{% block content %}
+
+<div class="card">
+  <div class="row" style="justify-content:space-between;">
+    <div>
+      <h3 style="margin:0">Gebruikersbeheer</h3>
+      <div class="muted small">Alleen Randy/admin kan gebruikers beheren.</div>
+    </div>
+
+    <a class="btn" href="{{ url_for('dashboard') }}">Terug naar dashboard</a>
+  </div>
+</div>
+
+<div style="height:14px"></div>
+
+<table>
+  <tr>
+    <th>Naam</th>
+    <th>Gebruikersnaam</th>
+    <th>Rol</th>
+    <th>Status</th>
+    <th>Laatst ingelogd</th>
+    <th>Acties</th>
+  </tr>
+
+  {% for u in users %}
+  <tr>
+    <td><b>{{ u["display_name"] }}</b></td>
+    <td>{{ u["username"] }}</td>
+    <td>{{ u["role"] }}</td>
+    <td>
+      {% if u["active"] %}
+        <span class="pill ok">Actief</span>
+      {% else %}
+        <span class="pill bad">Uitgeschakeld</span>
+      {% endif %}
+    </td>
+    <td class="muted small">{{ u["last_login_at"] or "—" }}</td>
+    <td>
+      <div class="row">
+        <form method="post" action="{{ url_for('admin_reset_password', user_id=u['id']) }}" style="margin:0;">
+          <button class="btn" type="submit">Reset wachtwoord</button>
+        </form>
+
+        {% if u["role"] != "admin" %}
+          <form method="post" action="{{ url_for('admin_toggle_user_active', user_id=u['id']) }}" style="margin:0;">
+            {% if u["active"] %}
+              <button class="btn danger" type="submit">Uitschakelen</button>
+            {% else %}
+              <button class="btn ok" type="submit">Inschakelen</button>
+            {% endif %}
+          </form>
+        {% endif %}
+      </div>
+    </td>
+  </tr>
+  {% endfor %}
+</table>
+
+{% endblock %}

@@ -469,6 +469,10 @@
       <a class="navlink" href="{{ url_for('import_page') }}">Import</a>
       <a class="navlink" href="{{ url_for('offers') }}">Offertes</a>
       <a class="navlink" href="{{ url_for('no_plate') }}">Zonder kenteken</a>
+
+      {% if session.get("role") == "admin" %}
+        <a class="navlink" href="{{ url_for('admin_users') }}">Gebruikers</a>
+      {% endif %}
     </nav>
   </div>
 </header>

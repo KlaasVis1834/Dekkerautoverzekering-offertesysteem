@@ -1,6 +1,22 @@
 {% extends "base.html" %}
 {% block content %}
 
+<div class="card">
+  <div class="row" style="justify-content:space-between; align-items:center;">
+    <div>
+      <h3 style="margin:0">Welkom {{ session.get("display_name") or session.get("username") }}</h3>
+      <div class="muted small">Rol: {{ session.get("role") }}</div>
+    </div>
+
+    <div class="row">
+      <a class="btn" href="{{ url_for('account') }}">Mijn account</a>
+      <a class="btn" href="{{ url_for('logout') }}">Uitloggen</a>
+    </div>
+  </div>
+</div>
+
+<div style="height:14px"></div>
+
 <div class="grid grid-2">
   <div class="kpi">
     <div>

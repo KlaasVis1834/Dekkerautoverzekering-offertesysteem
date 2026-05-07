@@ -65,6 +65,19 @@ def current_user_display():
     return session.get("display_name") or session.get("username") or "Onbekend"
 
 
+def admin_required(f):
+    @wraps(f)
+    def wrapper(*args, **kwargs):
+        if not session.get("logged_in"):
+            return redirect(url_for("login"))
+        if session.get("role") != "admin":
+            flash("Alleen de beheerder heeft toegang tot gebruikersbeheer.", "error")
+            return redirect(url_for("dashboard"))
+        return f(*args, **kwargs)
+
+    return wrapper
+
+
 def seed_default_users(conn):
     now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
@@ -117,12 +130,16 @@ def login():
         with connect() as conn:
             user = conn.execute(
                 """
-                SELECT id, username, display_name, password_hash, role
+                SELECT id, username, display_name, password_hash, role, active
                 FROM users
                 WHERE username = ?
                 """,
                 (username,),
             ).fetchone()
+
+        if user and int(user["active"] or 1) != 1:
+            flash("Dit account is uitgeschakeld.", "error")
+            return render_template("login.html")
 
         if user and check_password_hash(user["password_hash"], password):
             session["logged_in"] = True
@@ -130,6 +147,14 @@ def login():
             session["username"] = user["username"]
             session["display_name"] = user["display_name"]
             session["role"] = user["role"]
+
+            with connect() as conn:
+                conn.execute(
+                    "UPDATE users SET last_login_at = ? WHERE id = ?",
+                    (datetime.now().strftime("%Y-%m-%d %H:%M:%S"), user["id"]),
+                )
+                conn.commit()
+
             return redirect(url_for("dashboard"))
 
         flash("Ongeldige gebruikersnaam of wachtwoord.", "error")
@@ -183,6 +208,84 @@ def account():
         return redirect(url_for("account"))
 
     return render_template("account.html")
+
+
+@app.route("/admin/users")
+@admin_required
+def admin_users():
+    ensure_db()
+
+    with connect() as conn:
+        users = conn.execute(
+            """
+            SELECT id, username, display_name, role, active, created_at, last_login_at
+            FROM users
+            ORDER BY 
+                CASE WHEN role = 'admin' THEN 0 ELSE 1 END,
+                display_name ASC
+            """
+        ).fetchall()
+
+    return render_template("admin_users.html", users=users)
+
+
+@app.post("/admin/users/<int:user_id>/reset-password")
+@admin_required
+def admin_reset_password(user_id: int):
+    ensure_db()
+
+    with connect() as conn:
+        user = conn.execute(
+            "SELECT id, username, display_name FROM users WHERE id = ?",
+            (user_id,),
+        ).fetchone()
+
+        if not user:
+            flash("Gebruiker niet gevonden.", "error")
+            return redirect(url_for("admin_users"))
+
+        new_password = f"{user['display_name']}2026!"
+
+        conn.execute(
+            "UPDATE users SET password_hash = ? WHERE id = ?",
+            (generate_password_hash(new_password), user_id),
+        )
+        conn.commit()
+
+    flash(f"Wachtwoord gereset voor {user['display_name']}. Tijdelijk wachtwoord: {new_password}", "ok")
+    return redirect(url_for("admin_users"))
+
+
+@app.post("/admin/users/<int:user_id>/toggle-active")
+@admin_required
+def admin_toggle_user_active(user_id: int):
+    ensure_db()
+
+    if user_id == session.get("user_id"):
+        flash("Je kunt je eigen account niet uitschakelen.", "error")
+        return redirect(url_for("admin_users"))
+
+    with connect() as conn:
+        user = conn.execute(
+            "SELECT id, display_name, active FROM users WHERE id = ?",
+            (user_id,),
+        ).fetchone()
+
+        if not user:
+            flash("Gebruiker niet gevonden.", "error")
+            return redirect(url_for("admin_users"))
+
+        new_active = 0 if int(user["active"] or 1) == 1 else 1
+
+        conn.execute(
+            "UPDATE users SET active = ? WHERE id = ?",
+            (new_active, user_id),
+        )
+        conn.commit()
+
+    status = "ingeschakeld" if new_active == 1 else "uitgeschakeld"
+    flash(f"{user['display_name']} is {status}.", "ok")
+    return redirect(url_for("admin_users"))
 
 
 # -----------------------------
@@ -340,6 +443,9 @@ def ensure_db():
             )
             """
         )
+
+        _ensure_column(conn, "users", "active", "INTEGER DEFAULT 1")
+        _ensure_column(conn, "users", "last_login_at", "TEXT")
 
         seed_default_users(conn)
         conn.commit()

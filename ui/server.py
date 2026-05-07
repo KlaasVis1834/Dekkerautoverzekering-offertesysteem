@@ -2,6 +2,8 @@
 import sys
 import time
 import re
+import os
+from functools import wraps
 from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
@@ -39,9 +41,64 @@ from mailgen import (
 AANVRAAG_LINK = "https://www.klaasvis.online/aanvraagformulier/"
 
 app = Flask(__name__)
-app.secret_key = "dekker-offertesysteem-local"
+app.secret_key = os.environ.get("SECRET_KEY", "dekker-offertesysteem-local")
 
 DB_PATH = PROJECT_ROOT / "data" / "app.db"
+
+
+# -----------------------------
+# Login helpers
+# -----------------------------
+def get_users():
+    return {
+        os.environ.get("ADMIN_USERNAME", "admin"): {
+            "password": os.environ.get("ADMIN_PASSWORD", "admin123"),
+            "role": "admin",
+        },
+        os.environ.get("MEDEWERKER_USERNAME", "medewerker"): {
+            "password": os.environ.get("MEDEWERKER_PASSWORD", "medewerker123"),
+            "role": "medewerker",
+        },
+    }
+
+
+def login_required(f):
+    @wraps(f)
+    def wrapper(*args, **kwargs):
+        if not session.get("logged_in"):
+            return redirect(url_for("login"))
+        return f(*args, **kwargs)
+
+    return wrapper
+
+
+@app.route("/login", methods=["GET", "POST"])
+def login():
+    if session.get("logged_in"):
+        return redirect(url_for("dashboard"))
+
+    if request.method == "POST":
+        username = (request.form.get("username") or "").strip()
+        password = request.form.get("password") or ""
+
+        users = get_users()
+        user = users.get(username)
+
+        if user and password == user["password"]:
+            session["logged_in"] = True
+            session["username"] = username
+            session["role"] = user["role"]
+            return redirect(url_for("dashboard"))
+
+        flash("Ongeldige gebruikersnaam of wachtwoord.", "error")
+
+    return render_template("login.html")
+
+
+@app.route("/logout")
+def logout():
+    session.clear()
+    return redirect(url_for("login"))
 
 
 # -----------------------------
@@ -129,23 +186,16 @@ def ensure_db():
             """
         )
 
-        # ✅ mini-migraties
         _ensure_column(conn, "offers", "maandpremie", "REAL")
         _ensure_column(conn, "offers", "dienstverlening_bedrag", "REAL")
-
         _ensure_column(conn, "offers", "svj_override", "INTEGER")
         _ensure_column(conn, "offers", "is_bestaande_klant", "INTEGER DEFAULT 0")
-
         _ensure_column(conn, "offers", "revision_of", "TEXT")
         _ensure_column(conn, "offers", "revision_no", "INTEGER DEFAULT 0")
-
         _ensure_column(conn, "offers", "dekking_override", "TEXT")
         _ensure_column(conn, "offers", "extra_svi", "INTEGER DEFAULT 0")
         _ensure_column(conn, "offers", "extra_rb", "INTEGER DEFAULT 0")
 
-        # =========================
-        # ✅ No-plate voertuigen DB
-        # =========================
         conn.execute(
             """
             CREATE TABLE IF NOT EXISTS no_plate_vehicles (
@@ -155,14 +205,13 @@ def ensure_db():
                 model TEXT,
                 type_model TEXT,
 
-                voertuig_type TEXT,   -- personenauto/bestelauto
+                voertuig_type TEXT,
                 bouwjaar INTEGER,
 
-                brandstof TEXT,       -- ✅ nieuw
-                cataloguswaarde TEXT, -- legacy (oud)
+                brandstof TEXT,
+                cataloguswaarde TEXT,
                 gewicht TEXT,
 
-                -- ✅ nieuw: 2 cataloguswaardes
                 cataloguswaarde_part TEXT,
                 cataloguswaarde_zak  TEXT,
 
@@ -181,20 +230,14 @@ def ensure_db():
             """
         )
 
-        # ✅ migraties bestaande DB's
         _ensure_column(conn, "no_plate_vehicles", "brandstof", "TEXT")
         _ensure_column(conn, "no_plate_vehicles", "cataloguswaarde_part", "TEXT")
         _ensure_column(conn, "no_plate_vehicles", "cataloguswaarde_zak", "TEXT")
 
-        # ✅ koppeling no-plate voertuig + overrides per offerte
         _ensure_column(conn, "offers", "no_plate_vehicle_id", "INTEGER")
         _ensure_column(conn, "offers", "np_gewicht", "TEXT")
         _ensure_column(conn, "offers", "np_maandpremie", "REAL")
-
-        # legacy (bestaat al bij jou): np_cataloguswaarde
         _ensure_column(conn, "offers", "np_cataloguswaarde", "TEXT")
-
-        # ✅ nieuw (optioneel): overrides per klanttype
         _ensure_column(conn, "offers", "np_cataloguswaarde_part", "TEXT")
         _ensure_column(conn, "offers", "np_cataloguswaarde_zak", "TEXT")
 
@@ -240,9 +283,6 @@ def _parse_int(v):
 
 
 def _load_template_safe(rel_path: str):
-    """
-    Probeer template te laden; als hij niet bestaat -> None (geen crash).
-    """
     try:
         return load_template(rel_path)
     except Exception:
@@ -256,9 +296,6 @@ def _execute_retry(
     retries: int = 8,
     sleep_s: float = 0.25,
 ):
-    """
-    SQLite 'database is locked' afvangen met retries.
-    """
     last_err = None
     for _ in range(retries):
         try:
@@ -300,13 +337,6 @@ def _pick_np_premie(np_row: sqlite3.Row, klant_type: str, regio: int):
 
 
 def _pick_np_catalogus(np_row: sqlite3.Row, klant_type: str, offer_row: sqlite3.Row):
-    """
-    ✅ Kies juiste cataloguswaarde:
-    - particulier: offers.np_cataloguswaarde_part -> fallback offers.np_cataloguswaarde -> fallback np.cataloguswaarde_part -> fallback np.cataloguswaarde (legacy)
-    - zakelijk:   offers.np_cataloguswaarde_zak  -> fallback offers.np_cataloguswaarde -> fallback np.cataloguswaarde_zak  -> fallback np.cataloguswaarde (legacy)
-
-    Belangrijk: deze waarden zijn al "in context" (dus niet opnieuw omrekenen in pdfgen).
-    """
     kt = (klant_type or "").strip().lower()
 
     if kt == "zakelijk":
@@ -319,9 +349,8 @@ def _pick_np_catalogus(np_row: sqlite3.Row, klant_type: str, offer_row: sqlite3.
         v = (np_row["cataloguswaarde_zak"] or "").strip() if "cataloguswaarde_zak" in np_row.keys() else ""
         if v:
             return v
-        return (np_row["cataloguswaarde"] or "").strip()  # legacy
+        return (np_row["cataloguswaarde"] or "").strip()
 
-    # particulier
     o = (offer_row["np_cataloguswaarde_part"] or "").strip() if "np_cataloguswaarde_part" in offer_row.keys() else ""
     if o:
         return o
@@ -331,87 +360,56 @@ def _pick_np_catalogus(np_row: sqlite3.Row, klant_type: str, offer_row: sqlite3.
     v = (np_row["cataloguswaarde_part"] or "").strip() if "cataloguswaarde_part" in np_row.keys() else ""
     if v:
         return v
-    return (np_row["cataloguswaarde"] or "").strip()  # legacy
+    return (np_row["cataloguswaarde"] or "").strip()
 
 
-# -----------------------------
-# ✅ Kenteken helpers (NIEUW)
-# -----------------------------
 def _kenteken_lookup_value(kenteken: str) -> str:
-    """
-    Voor lookup (RDW/rolls): zonder streepjes/spaties, uppercase.
-    """
     return re.sub(r"[^A-Za-z0-9]", "", (kenteken or "")).upper().strip()
 
 
 def _format_nl_kenteken(kenteken: str) -> str:
-    """
-    Voor weergave in PDF: probeer NL-indeling met streepjes terug te zetten.
-    - Als er al '-' in zit: normaliseer alleen.
-    - Anders: op basis van letter/cijfer patroon splitsen.
-    """
     raw = (kenteken or "").strip().upper()
     if not raw:
         return ""
 
     if "-" in raw:
-        # normaliseer: alleen alnum per deel, join met '-'
         parts = [re.sub(r"[^A-Z0-9]", "", p) for p in raw.split("-")]
         parts = [p for p in parts if p]
         return "-".join(parts)
 
     s = _kenteken_lookup_value(raw)
     if len(s) != 6:
-        return s  # onbekende lengte -> toon zoals het is (zonder rare dingen)
+        return s
 
-    # patronen voor 6-tekens kentekens (NL combinaties)
-    # 2-2-2
-    if re.match(r"^[A-Z]{2}\d{2}\d{2}$", s):  # XX9999 -> XX-99-99
+    if re.match(r"^[A-Z]{2}\d{2}\d{2}$", s):
         return f"{s[:2]}-{s[2:4]}-{s[4:]}"
-    if re.match(r"^\d{2}[A-Z]{2}\d{2}$", s):  # 99XX99 -> 99-XX-99
+    if re.match(r"^\d{2}[A-Z]{2}\d{2}$", s):
         return f"{s[:2]}-{s[2:4]}-{s[4:]}"
-    if re.match(r"^[A-Z]{2}\d{2}[A-Z]{2}$", s):  # XX99XX -> XX-99-XX
+    if re.match(r"^[A-Z]{2}\d{2}[A-Z]{2}$", s):
         return f"{s[:2]}-{s[2:4]}-{s[4:]}"
-    if re.match(r"^[A-Z]{4}\d{2}$", s):  # XXXX99 -> XX-XX-99
+    if re.match(r"^[A-Z]{4}\d{2}$", s):
         return f"{s[:2]}-{s[2:4]}-{s[4:]}"
-    if re.match(r"^\d{2}[A-Z]{4}$", s):  # 99XXXX -> 99-XX-XX
+    if re.match(r"^\d{2}[A-Z]{4}$", s):
         return f"{s[:2]}-{s[2:4]}-{s[4:]}"
-    if re.match(r"^\d{4}[A-Z]{2}$", s):  # 9999XX -> 99-99-XX
+    if re.match(r"^\d{4}[A-Z]{2}$", s):
         return f"{s[:2]}-{s[2:4]}-{s[4:]}"
-
-    # 1-3-2  (X-999-XX)  -> voorbeeld S453RX
     if re.match(r"^[A-Z]\d{3}[A-Z]{2}$", s):
         return f"{s[:1]}-{s[1:4]}-{s[4:]}"
-    # 1-3-2  (9-XXX-99)
     if re.match(r"^\d[A-Z]{3}\d{2}$", s):
         return f"{s[:1]}-{s[1:4]}-{s[4:]}"
-
-    # 2-3-1 (XX-999-X) / (99-XXX-9)
     if re.match(r"^[A-Z]{2}\d{3}[A-Z]$", s):
         return f"{s[:2]}-{s[2:5]}-{s[5:]}"
     if re.match(r"^\d{2}[A-Z]{3}\d$", s):
         return f"{s[:2]}-{s[2:5]}-{s[5:]}"
-
-    # 3-2-1 (XXX-99-X)
     if re.match(r"^[A-Z]{3}\d{2}[A-Z]$", s):
         return f"{s[:3]}-{s[3:5]}-{s[5:]}"
-
-    # 1-2-3 (X-99-XXX)
     if re.match(r"^[A-Z]\d{2}[A-Z]{3}$", s):
         return f"{s[:1]}-{s[1:3]}-{s[3:]}"
 
-    # fallback
     return f"{s[:2]}-{s[2:4]}-{s[4:]}"
 
 
-# -----------------------------
-# ✅ PDF bestandsnaam helpers
-# -----------------------------
 def _safe_filename(s: str) -> str:
-    """
-    Windows-safe bestandsnaam:
-    verwijdert <>:"/\\|?* en control chars, trims, dubbele spaties eruit.
-    """
     s = (s or "").strip()
     s = re.sub(r"[<>:\"/\\\\|?*]", " ", s)
     s = re.sub(r"[\x00-\x1f]", " ", s)
@@ -428,11 +426,6 @@ def _strip_known_titles(name: str) -> str:
 
 
 def _initials_from_name(full_name: str, achternaam: str) -> str:
-    """
-    Probeert voorletters uit full_name te halen.
-    - Als er al A. B. in staat: behoudt dat.
-    - Anders: van voornamen initialen maken.
-    """
     full = _strip_known_titles(full_name)
     a = (achternaam or "").strip()
 
@@ -463,11 +456,9 @@ def _klant_display_for_filename(klantnaam: str, klant_type: str) -> str:
     kt = (klant_type or "").strip().lower()
     kn = (klantnaam or "").strip()
 
-    # zakelijk -> alleen bedrijfsnaam
     if kt == "zakelijk":
         return kn
 
-    # particulier/prospect -> aanhef + voorletters + achternaam
     aanhef, achternaam = guess_aanhef_en_achternaam(kn)
     aanhef = (aanhef or "").strip()
     achternaam = (achternaam or "").strip()
@@ -479,10 +470,6 @@ def _klant_display_for_filename(klantnaam: str, klant_type: str) -> str:
 
 
 def _short_offer_no_for_filename(offer_no: str) -> str:
-    """
-    2026-02-000123 -> 2026-02-123
-    Laat prefix intact, strip alleen leading zeros in het LAATSTE deel.
-    """
     s = (offer_no or "").strip()
     if not s:
         return s
@@ -552,6 +539,7 @@ def _compose_dekking(auto_dekking: str, dekking_override: str, extra_svi, extra_
 # Routes
 # -----------------------------
 @app.route("/")
+@login_required
 def dashboard():
     ensure_db()
     last_batch_id = get_last_batch_id()
@@ -578,12 +566,14 @@ def dashboard():
 
 
 @app.route("/followups")
+@login_required
 def followups():
     flash("Bel-lijst is uitgeschakeld. Je zit nu op Offertes.", "ok")
     return redirect(url_for("offers"))
 
 
 @app.route("/import", methods=["GET", "POST"])
+@login_required
 def import_page():
     ensure_db()
 
@@ -629,6 +619,7 @@ def import_page():
 
 
 @app.route("/offers")
+@login_required
 def offers():
     ensure_db()
 
@@ -704,6 +695,7 @@ def offers():
 
 
 @app.route("/blocked")
+@login_required
 def blocked():
     ensure_db()
     with connect() as conn:
@@ -720,18 +712,8 @@ def blocked():
 
 
 @app.post("/offer/<offer_no>/update-meta")
+@login_required
 def update_offer_meta(offer_no: str):
-    """
-    Bewaart meta:
-    - maandpremie
-    - dienstverlening_bedrag = 18%
-    - svj_override
-    - handmatige dekking + extra dekkingen
-    - is_bestaande_klant
-    - revision_of + revision_no
-    - np_maandpremie (override no-plate premie)
-    - np_cataloguswaarde_part / np_cataloguswaarde_zak (optioneel later via offers.html)
-    """
     ensure_db()
     next_url = request.form.get("next") or url_for("offers")
 
@@ -795,6 +777,7 @@ def update_offer_meta(offer_no: str):
 
 
 @app.post("/offer/<offer_no>/decision")
+@login_required
 def set_decision(offer_no: str):
     ensure_db()
 
@@ -825,6 +808,7 @@ def set_decision(offer_no: str):
 
 
 @app.post("/offer/<offer_no>/delete")
+@login_required
 def delete_offer(offer_no: str):
     ensure_db()
 
@@ -855,6 +839,7 @@ def delete_offer(offer_no: str):
 
 
 @app.get("/offer/<offer_no>/download-postbrief")
+@login_required
 def download_postbrief(offer_no: str):
     ensure_db()
     now = datetime.now()
@@ -914,10 +899,8 @@ def download_postbrief(offer_no: str):
     return send_file(abs_path, as_attachment=True, download_name=f"Postbrief_{offer_no}.pdf")
 
 
-# -----------------------------
-# No-plate routes
-# -----------------------------
 @app.route("/no-plate", methods=["GET", "POST"])
+@login_required
 def no_plate():
     ensure_db()
 
@@ -937,11 +920,8 @@ def no_plate():
         brandstof = (request.form.get("brandstof") or "").strip()
         gewicht = (request.form.get("gewicht") or "").strip()
 
-        # ✅ 2 cataloguswaardes
         catalogus_part = (request.form.get("cataloguswaarde_part") or "").strip()
         catalogus_zak = (request.form.get("cataloguswaarde_zak") or "").strip()
-
-        # legacy veld (voor oude db's; vullen we desnoods met particulier)
         catalogus_legacy = (request.form.get("cataloguswaarde") or "").strip()
 
         def f(name):
@@ -1028,6 +1008,7 @@ def no_plate():
 
 
 @app.post("/no-plate/<int:vid>/delete")
+@login_required
 def no_plate_delete(vid: int):
     ensure_db()
     with connect() as conn:
@@ -1038,6 +1019,7 @@ def no_plate_delete(vid: int):
 
 
 @app.get("/no-plate/search")
+@login_required
 def no_plate_search():
     ensure_db()
     q = (request.args.get("q") or "").strip()
@@ -1091,6 +1073,7 @@ def no_plate_search():
 
 
 @app.post("/offer/<offer_no>/set-no-plate")
+@login_required
 def set_no_plate_for_offer(offer_no: str):
     ensure_db()
     next_url = request.form.get("next") or url_for("offers")
@@ -1106,7 +1089,6 @@ def set_no_plate_for_offer(offer_no: str):
             flash("No-plate voertuig niet gevonden.", "error")
             return redirect(next_url)
 
-        # ✅ Forceer no-plate pad: kenteken leeg
         _execute_retry(
             conn,
             """
@@ -1136,9 +1118,6 @@ def set_no_plate_for_offer(offer_no: str):
     return redirect(next_url)
 
 
-# -----------------------------
-# Export helpers
-# -----------------------------
 def _choose_mail_template(
     klant_type: str,
     is_bestaande_klant: bool,
@@ -1170,9 +1149,6 @@ def _subject_for_offer(klant_type: str, revision_no: int, offer_no: str) -> str:
 
 
 def _build_pdf_and_delivery(conn: sqlite3.Connection, r: sqlite3.Row, now: datetime):
-    """
-    Bouwt PDF + (MSG of Post), update DB, return dict met info.
-    """
     offer_no = r["offer_no"]
     klant_type = (r["klant_type"] or "particulier").strip().lower()
     email = (r["email"] or "").strip() or None
@@ -1198,9 +1174,6 @@ def _build_pdf_and_delivery(conn: sqlite3.Connection, r: sqlite3.Row, now: datet
         except Exception:
             np_row = None
 
-    # ==========================
-    # ✅ NO-PLATE PAD
-    # ==========================
     if np_row:
         np_merk = (np_row["merk"] or "").strip()
         np_model = (np_row["model"] or "").strip()
@@ -1216,7 +1189,6 @@ def _build_pdf_and_delivery(conn: sqlite3.Connection, r: sqlite3.Row, now: datet
         brandstof_final = (np_row["brandstof"] or "").strip()
         gewicht_final = (r["np_gewicht"] or np_row["gewicht"] or "").strip()
 
-        # ✅ juiste cataloguswaarde per klanttype (met fallback + offer overrides)
         catalogus_final = _pick_np_catalogus(np_row, klant_type, r)
 
         auto_str = " ".join([x for x in [np_merk, np_model] if x]).strip()
@@ -1228,7 +1200,7 @@ def _build_pdf_and_delivery(conn: sqlite3.Connection, r: sqlite3.Row, now: datet
             bj_int = None
         dekking = bepaal_dekking(bj_int)
 
-        meldcode_final = "-"  # geen kenteken
+        meldcode_final = "-"
 
         np_maandpremie = r["np_maandpremie"] if "np_maandpremie" in r.keys() else None
         maandpremie = r["maandpremie"] if "maandpremie" in r.keys() else None
@@ -1262,8 +1234,8 @@ def _build_pdf_and_delivery(conn: sqlite3.Connection, r: sqlite3.Row, now: datet
             },
             voertuig={
                 "auto": auto_str,
-                "kenteken": "",  # ✅ leeg
-                "brandstof": brandstof_final,  # ✅ uit no-plate db
+                "kenteken": "",
+                "brandstof": brandstof_final,
                 "voertuig_type": voertuig_type,
                 "merk": np_merk,
                 "model": np_model,
@@ -1278,21 +1250,16 @@ def _build_pdf_and_delivery(conn: sqlite3.Connection, r: sqlite3.Row, now: datet
                 "bouwjaar": bouwjaar_final,
                 "cataloguswaarde": catalogus_final,
                 "dagwaarde": "",
-                "bpm": "",  # meestal onbekend
+                "bpm": "",
                 "meldcode": meldcode_final,
                 "premie_maand": premie_final,
                 "svj_override": svj_override,
-                # ✅ belangrijk: no-plate cataloguswaarde is al in juiste context
                 "waarde_al_in_context": "1",
             },
             filename_base=_offer_pdf_filename_base(r["klantnaam"] or "", klant_type, offer_no),
         )
 
-    # ==========================
-    # ✅ NORMAAL PAD (kenteken)
-    # ==========================
     else:
-        # ✅ FIX: altijd lookup zonder streepjes, maar weergave mét streepjes
         kenteken_lookup = _kenteken_lookup_value(kenteken_db)
         kenteken_display = _format_nl_kenteken(kenteken_db)
 
@@ -1353,7 +1320,7 @@ def _build_pdf_and_delivery(conn: sqlite3.Connection, r: sqlite3.Row, now: datet
             },
             voertuig={
                 "auto": auto_str,
-                "kenteken": kenteken_display,  # ✅ HIER: weergave met streepjes
+                "kenteken": kenteken_display,
                 "brandstof": getattr(vinfo, "brandstof", "") or "",
                 "voertuig_type": voertuig_type,
                 "merk": getattr(vinfo, "merk", "") or (r["merk"] or ""),
@@ -1379,9 +1346,6 @@ def _build_pdf_and_delivery(conn: sqlite3.Connection, r: sqlite3.Row, now: datet
             filename_base=_offer_pdf_filename_base(r["klantnaam"] or "", klant_type, offer_no),
         )
 
-    # -----------------------------
-    # Levering (email/post)
-    # -----------------------------
     if email:
         template = _choose_mail_template(
             klant_type=klant_type,
@@ -1469,10 +1433,8 @@ def _build_pdf_and_delivery(conn: sqlite3.Connection, r: sqlite3.Row, now: datet
     return {"kind": "post", "pdf": offer_pdf_path, "post": post_letter_path}
 
 
-# -----------------------------
-# Export routes
-# -----------------------------
 @app.post("/export-last-batch")
+@login_required
 def export_last_batch():
     ensure_db()
     now = datetime.now()
@@ -1546,6 +1508,7 @@ def export_last_batch():
 
 
 @app.post("/offer/<offer_no>/export-one")
+@login_required
 def export_one_offer(offer_no: str):
     ensure_db()
     now = datetime.now()
@@ -1568,10 +1531,8 @@ def export_one_offer(offer_no: str):
     return redirect(next_url)
 
 
-# -----------------------------
-# File/browse routes
-# -----------------------------
 @app.get("/file")
+@login_required
 def get_file():
     rel = request.args.get("path", "").strip()
     if not rel:
@@ -1592,6 +1553,7 @@ def get_file():
 
 
 @app.route("/browse/<kind>")
+@login_required
 def browse(kind: str):
     ensure_db()
 

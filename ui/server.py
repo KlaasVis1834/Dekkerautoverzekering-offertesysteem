@@ -20,6 +20,7 @@ from flask import (
     flash,
     send_file,
     jsonify,
+    session,
 )
 
 from importers import import_excel, get_last_batch_id  # noqa

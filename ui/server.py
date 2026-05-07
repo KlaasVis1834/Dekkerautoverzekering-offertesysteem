@@ -25,6 +25,8 @@ from flask import (
     session,
 )
 
+from werkzeug.security import generate_password_hash, check_password_hash
+
 from importers import import_excel, get_last_batch_id  # noqa
 from outlook_msg import write_msg_outlook  # noqa
 from voertuigdata import get_vehicle_info  # noqa
@@ -49,17 +51,46 @@ DB_PATH = PROJECT_ROOT / "data" / "app.db"
 # -----------------------------
 # Login helpers
 # -----------------------------
-def get_users():
-    return {
-        os.environ.get("ADMIN_USERNAME", "admin"): {
-            "password": os.environ.get("ADMIN_PASSWORD", "admin123"),
-            "role": "admin",
-        },
-        os.environ.get("MEDEWERKER_USERNAME", "medewerker"): {
-            "password": os.environ.get("MEDEWERKER_PASSWORD", "medewerker123"),
-            "role": "medewerker",
-        },
-    }
+DEFAULT_USERS = [
+    ("randy", "Randy", "admin"),
+    ("tim", "Tim", "medewerker"),
+    ("dirk", "Dirk", "medewerker"),
+    ("marcel", "Marcel", "medewerker"),
+    ("petra", "Petra", "medewerker"),
+    ("marjolein", "Marjolein", "medewerker"),
+]
+
+
+def current_user_display():
+    return session.get("display_name") or session.get("username") or "Onbekend"
+
+
+def seed_default_users(conn):
+    now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+    for username, display_name, role in DEFAULT_USERS:
+        existing = conn.execute(
+            "SELECT id FROM users WHERE username = ?",
+            (username,),
+        ).fetchone()
+
+        if existing:
+            continue
+
+        temp_password = f"{display_name}2026!"
+        conn.execute(
+            """
+            INSERT INTO users (username, display_name, password_hash, role, created_at)
+            VALUES (?, ?, ?, ?, ?)
+            """,
+            (
+                username,
+                display_name,
+                generate_password_hash(temp_password),
+                role,
+                now,
+            ),
+        )
 
 
 def login_required(f):
@@ -74,19 +105,30 @@ def login_required(f):
 
 @app.route("/login", methods=["GET", "POST"])
 def login():
+    ensure_db()
+
     if session.get("logged_in"):
         return redirect(url_for("dashboard"))
 
     if request.method == "POST":
-        username = (request.form.get("username") or "").strip()
+        username = (request.form.get("username") or "").strip().lower()
         password = request.form.get("password") or ""
 
-        users = get_users()
-        user = users.get(username)
+        with connect() as conn:
+            user = conn.execute(
+                """
+                SELECT id, username, display_name, password_hash, role
+                FROM users
+                WHERE username = ?
+                """,
+                (username,),
+            ).fetchone()
 
-        if user and password == user["password"]:
+        if user and check_password_hash(user["password_hash"], password):
             session["logged_in"] = True
-            session["username"] = username
+            session["user_id"] = user["id"]
+            session["username"] = user["username"]
+            session["display_name"] = user["display_name"]
             session["role"] = user["role"]
             return redirect(url_for("dashboard"))
 
@@ -99,6 +141,48 @@ def login():
 def logout():
     session.clear()
     return redirect(url_for("login"))
+
+
+@app.route("/account", methods=["GET", "POST"])
+@login_required
+def account():
+    ensure_db()
+
+    if request.method == "POST":
+        current_password = request.form.get("current_password") or ""
+        new_password = request.form.get("new_password") or ""
+        confirm_password = request.form.get("confirm_password") or ""
+
+        if len(new_password) < 8:
+            flash("Nieuw wachtwoord moet minimaal 8 tekens bevatten.", "error")
+            return redirect(url_for("account"))
+
+        if new_password != confirm_password:
+            flash("De nieuwe wachtwoorden komen niet overeen.", "error")
+            return redirect(url_for("account"))
+
+        username = session.get("username")
+
+        with connect() as conn:
+            user = conn.execute(
+                "SELECT id, password_hash FROM users WHERE username = ?",
+                (username,),
+            ).fetchone()
+
+            if not user or not check_password_hash(user["password_hash"], current_password):
+                flash("Huidig wachtwoord klopt niet.", "error")
+                return redirect(url_for("account"))
+
+            conn.execute(
+                "UPDATE users SET password_hash = ? WHERE id = ?",
+                (generate_password_hash(new_password), user["id"]),
+            )
+            conn.commit()
+
+        flash("Wachtwoord succesvol gewijzigd.", "ok")
+        return redirect(url_for("account"))
+
+    return render_template("account.html")
 
 
 # -----------------------------
@@ -195,6 +279,9 @@ def ensure_db():
         _ensure_column(conn, "offers", "dekking_override", "TEXT")
         _ensure_column(conn, "offers", "extra_svi", "INTEGER DEFAULT 0")
         _ensure_column(conn, "offers", "extra_rb", "INTEGER DEFAULT 0")
+        _ensure_column(conn, "offers", "created_by", "TEXT")
+        _ensure_column(conn, "offers", "updated_by", "TEXT")
+        _ensure_column(conn, "offers", "updated_at", "TEXT")
 
         conn.execute(
             """
@@ -241,6 +328,20 @@ def ensure_db():
         _ensure_column(conn, "offers", "np_cataloguswaarde_part", "TEXT")
         _ensure_column(conn, "offers", "np_cataloguswaarde_zak", "TEXT")
 
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS users (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                username TEXT UNIQUE NOT NULL,
+                display_name TEXT NOT NULL,
+                password_hash TEXT NOT NULL,
+                role TEXT DEFAULT 'medewerker',
+                created_at TEXT
+            )
+            """
+        )
+
+        seed_default_users(conn)
         conn.commit()
 
 
@@ -602,6 +703,26 @@ def import_page():
 
         try:
             n = import_excel(str(excel_path), deny_path)
+            batch_id = get_last_batch_id()
+            if batch_id:
+                with connect() as conn:
+                    conn.execute(
+                        """
+                        UPDATE offers
+                        SET created_by = COALESCE(NULLIF(created_by, ''), ?),
+                            updated_by = ?,
+                            updated_at = ?
+                        WHERE batch_id = ?
+                        """,
+                        (
+                            current_user_display(),
+                            current_user_display(),
+                            datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                            batch_id,
+                        ),
+                    )
+                    conn.commit()
+
             flash(f"Import gelukt: {n} rijen verwerkt.", "ok")
         except Exception as e:
             flash(f"Import fout: {e}", "error")
@@ -638,7 +759,8 @@ def offers():
            maandpremie, dienstverlening_bedrag,
            svj_override, is_bestaande_klant,
            revision_of, revision_no,
-           no_plate_vehicle_id, np_gewicht, np_maandpremie, np_cataloguswaarde, np_cataloguswaarde_part, np_cataloguswaarde_zak
+           no_plate_vehicle_id, np_gewicht, np_maandpremie, np_cataloguswaarde, np_cataloguswaarde_part, np_cataloguswaarde_zak,
+           created_by, updated_by, updated_at
     FROM offers
     WHERE 1=1
     """
@@ -753,7 +875,9 @@ def update_offer_meta(offer_no: str):
                 extra_rb = ?,
                 is_bestaande_klant = ?,
                 revision_of = ?,
-                revision_no = ?
+                revision_no = ?,
+                updated_by = ?,
+                updated_at = ?
             WHERE offer_no = ?
             """,
             (
@@ -767,6 +891,8 @@ def update_offer_meta(offer_no: str):
                 is_bestaande_klant,
                 revision_of,
                 revision_no,
+                current_user_display(),
+                datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
                 offer_no,
             ),
         )
@@ -796,10 +922,19 @@ def set_decision(offer_no: str):
             UPDATE offers
             SET decision_status = ?,
                 call_status = ?,
-                last_call_at = CASE WHEN ? != 'open' THEN date('now') ELSE last_call_at END
+                last_call_at = CASE WHEN ? != 'open' THEN date('now') ELSE last_call_at END,
+                updated_by = ?,
+                updated_at = ?
             WHERE offer_no = ?
             """,
-            (decision, new_call_status, decision, offer_no),
+            (
+                decision,
+                new_call_status,
+                decision,
+                current_user_display(),
+                datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                offer_no,
+            ),
         )
         conn.commit()
 
@@ -888,10 +1023,17 @@ def download_postbrief(offer_no: str):
             UPDATE offers
             SET post_letter_path = ?,
                 delivery_method = 'post',
-                delivery_status = 'post_klaar'
+                delivery_status = 'post_klaar',
+                updated_by = ?,
+                updated_at = ?
             WHERE offer_no = ?
             """,
-            (post_letter_path, offer_no),
+            (
+                post_letter_path,
+                current_user_display(),
+                datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                offer_no,
+            ),
         )
         conn.commit()
 
@@ -1099,7 +1241,9 @@ def set_no_plate_for_offer(offer_no: str):
                 model = ?,
                 type_model = ?,
                 voertuig_type = COALESCE(NULLIF(?,''), voertuig_type),
-                bouwjaar = COALESCE(?, bouwjaar)
+                bouwjaar = COALESCE(?, bouwjaar),
+                updated_by = ?,
+                updated_at = ?
             WHERE offer_no = ?
             """,
             (
@@ -1109,6 +1253,8 @@ def set_no_plate_for_offer(offer_no: str):
                 (np_row["type_model"] or "").strip(),
                 (np_row["voertuig_type"] or "").strip().lower(),
                 np_row["bouwjaar"],
+                current_user_display(),
+                datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
                 offer_no,
             ),
         )
@@ -1399,10 +1545,17 @@ def _build_pdf_and_delivery(conn: sqlite3.Connection, r: sqlite3.Row, now: datet
             """
             UPDATE offers
             SET offer_pdf_path = ?, eml_path = ?, post_letter_path = NULL,
-                delivery_method = 'email', delivery_status = 'email_klaar'
+                delivery_method = 'email', delivery_status = 'email_klaar',
+                updated_by = ?, updated_at = ?
             WHERE offer_no = ?
             """,
-            (offer_pdf_path, msg_path, offer_no),
+            (
+                offer_pdf_path,
+                msg_path,
+                current_user_display(),
+                datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                offer_no,
+            ),
         )
         return {"kind": "email", "pdf": offer_pdf_path, "msg": msg_path}
 
@@ -1425,10 +1578,17 @@ def _build_pdf_and_delivery(conn: sqlite3.Connection, r: sqlite3.Row, now: datet
         """
         UPDATE offers
         SET offer_pdf_path = ?, post_letter_path = ?, eml_path = NULL,
-            delivery_method = 'post', delivery_status = 'post_klaar'
+            delivery_method = 'post', delivery_status = 'post_klaar',
+            updated_by = ?, updated_at = ?
         WHERE offer_no = ?
         """,
-        (offer_pdf_path, post_letter_path, offer_no),
+        (
+            offer_pdf_path,
+            post_letter_path,
+            current_user_display(),
+            datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            offer_no,
+        ),
     )
     return {"kind": "post", "pdf": offer_pdf_path, "post": post_letter_path}
 

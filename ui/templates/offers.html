@@ -1,8 +1,78 @@
 {% extends "base.html" %}
 {% block content %}
 
+<style>
+  .offers-mobile {
+    display: none;
+  }
+
+  .offer-meta {
+    margin-top: 6px;
+    padding-top: 6px;
+    border-top: 1px solid var(--line);
+  }
+
+  .mobile-offer-card {
+    background: #fff;
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
+    box-shadow: var(--shadow);
+    padding: 14px;
+    margin-bottom: 14px;
+  }
+
+  .mobile-section {
+    margin-top: 14px;
+    padding-top: 12px;
+    border-top: 1px solid var(--line);
+  }
+
+  .mobile-section h4 {
+    margin: 0 0 8px;
+    font-size: 14px;
+  }
+
+  @media (max-width: 760px) {
+    .offers-table {
+      display: none;
+    }
+
+    .offers-mobile {
+      display: block;
+    }
+
+    .offers-header {
+      align-items: stretch !important;
+    }
+
+    .offers-header > div,
+    .offers-header form {
+      width: 100%;
+    }
+
+    .offers-header form input,
+    .offers-header form select,
+    .offers-header form button,
+    .offers-header form a {
+      width: 100%;
+    }
+
+    .mobile-section .row {
+      width: 100%;
+    }
+
+    .mobile-section input,
+    .mobile-section select,
+    .mobile-section button,
+    .mobile-section a,
+    .mobile-section form {
+      width: 100%;
+    }
+  }
+</style>
+
 <div class="card">
-  <div class="row" style="justify-content:space-between;">
+  <div class="row offers-header" style="justify-content:space-between;">
     <div>
       <h3 style="margin:0">Offertes</h3>
       <div class="muted small">Zoek op klantnaam, kenteken, e-mail of offertenummer. Bij lege kentekens kun je een no-plate voertuig koppelen.</div>
@@ -31,7 +101,7 @@
 
 <div style="height:14px"></div>
 
-<table>
+<table class="offers-table">
   <tr>
     <th>Offerte</th>
     <th>Klant</th>
@@ -47,6 +117,13 @@
       <div><b>{{ r["offer_no"] }}</b></div>
       <div class="muted small">{{ r["created_at"] or "—" }}</div>
       <div class="muted small">Batch: <b>{{ r["batch_id"] or "—" }}</b></div>
+
+      <div class="muted small offer-meta">
+        Aangemaakt door: <b>{{ r["created_by"] or "—" }}</b><br>
+        Laatst aangepast door: <b>{{ r["updated_by"] or "—" }}</b><br>
+        Laatst aangepast op: <b>{{ r["updated_at"] or "—" }}</b>
+      </div>
+
       {% if r["revision_no"] and r["revision_no"]|int > 0 %}
         <div class="pill warn" style="margin-top:6px;">Aangepast (rev {{ r["revision_no"] }})</div>
       {% endif %}
@@ -198,6 +275,174 @@
   {% endfor %}
 </table>
 
+<div class="offers-mobile">
+  {% for r in rows %}
+    <div class="mobile-offer-card">
+      <div class="row" style="justify-content:space-between;">
+        <div>
+          <div><b>{{ r["offer_no"] }}</b></div>
+          <div class="muted small">{{ r["created_at"] or "—" }}</div>
+          <div class="muted small">Batch: <b>{{ r["batch_id"] or "—" }}</b></div>
+        </div>
+
+        <div>
+          {% if r["is_blocked"] %}
+            <div class="pill bad">Geblokkeerd</div>
+          {% else %}
+            {% if (r["delivery_status"] or "") == "email_klaar" %}
+              <div class="pill ok">E-mail klaar</div>
+            {% elif (r["delivery_status"] or "") == "post_klaar" %}
+              <div class="pill ok">Post klaar</div>
+            {% else %}
+              <div class="pill warn">{{ r["delivery_status"] or "nieuw" }}</div>
+            {% endif %}
+          {% endif %}
+        </div>
+      </div>
+
+      {% if r["revision_no"] and r["revision_no"]|int > 0 %}
+        <div class="pill warn" style="margin-top:8px;">Aangepast (rev {{ r["revision_no"] }})</div>
+      {% endif %}
+
+      <div class="mobile-section">
+        <h4>Klant</h4>
+        <div><b>{{ r["klantnaam"] or "—" }}</b></div>
+        <div class="muted small">Type: <b>{{ r["klant_type"] or "—" }}</b></div>
+        <div class="muted small">Regio: <b>{{ r["regio"] or "—" }}</b></div>
+        <div class="muted small">{{ r["email"] or "—" }}</div>
+        <div class="muted small">{{ r["telefoon"] or "—" }}</div>
+      </div>
+
+      <div class="mobile-section">
+        <h4>Auto</h4>
+        <div><b>{{ (r["merk"] or "") ~ " " ~ (r["model"] or "") }}</b></div>
+        <div class="muted small">{{ r["type_model"] or "—" }}</div>
+        <div class="muted small">Kenteken: <b>{{ (r["kenteken"] or "-") if (r["kenteken"] or "")|trim != "" else "-" }}</b></div>
+
+        {% if (r["kenteken"] or "")|trim == "" %}
+          <div style="margin-top:10px;">
+            <div class="muted small" style="font-weight:900;">Kies voertuig (geen kenteken)</div>
+
+            <form method="post" action="{{ url_for('set_no_plate_for_offer', offer_no=r['offer_no']) }}" class="grid" style="margin-top:6px; gap:8px;">
+              <input type="hidden" name="next" value="{{ request.full_path }}">
+              <input type="hidden" name="no_plate_vehicle_id" id="np_id_m_{{ r['offer_no'] }}">
+
+              <input
+                type="text"
+                placeholder="Zoek merk/model/type..."
+                oninput="npSearchMobile('{{ r['offer_no'] }}', this.value)"
+              />
+
+              <select id="np_select_m_{{ r['offer_no'] }}" onchange="npPickMobile('{{ r['offer_no'] }}')">
+                <option value="">— kies uit resultaten —</option>
+              </select>
+
+              <button class="btn ok" type="submit">Koppel voertuig</button>
+            </form>
+
+            <div class="muted small" style="margin-top:6px;">
+              Gekoppeld ID: <b>{{ r["no_plate_vehicle_id"] or "—" }}</b>
+            </div>
+          </div>
+        {% endif %}
+      </div>
+
+      <div class="mobile-section">
+        <h4>Premie / SVJ / Dekking</h4>
+
+        <form method="post" action="{{ url_for('update_offer_meta', offer_no=r['offer_no']) }}" class="grid" style="gap:8px; margin:0;">
+          <input type="hidden" name="next" value="{{ request.full_path }}">
+
+          <input name="maandpremie" placeholder="Maandpremie" value="{{ r['maandpremie'] if r['maandpremie'] is not none else '' }}" />
+          <input name="np_maandpremie" placeholder="NP premie override" value="{{ r['np_maandpremie'] if r['np_maandpremie'] is not none else '' }}" />
+          <input name="svj_override" placeholder="SVJ override" value="{{ r['svj_override'] if r['svj_override'] is not none else '' }}" />
+
+          <label class="row muted small" style="gap:8px;">
+            <input type="checkbox" name="is_bestaande_klant" {% if r["is_bestaande_klant"] %}checked{% endif %} style="min-width:auto; width:auto;">
+            Bestaande klant
+          </label>
+
+          <select name="dekking_override">
+            <option value="">Automatisch (standaard)</option>
+            <option value="WA" {% if r["dekking_override"] == "WA" %}selected{% endif %}>WA</option>
+            <option value="WA Beperkt Casco" {% if r["dekking_override"] == "WA Beperkt Casco" %}selected{% endif %}>WA / Beperkt Casco</option>
+            <option value="Allrisk" {% if r["dekking_override"] == "Allrisk" %}selected{% endif %}>WA / Casco Compleet (Allrisk)</option>
+          </select>
+
+          <label class="row muted small" style="gap:8px;">
+            <input type="checkbox" name="extra_svi" {% if r["extra_svi"] %}checked{% endif %} style="min-width:auto; width:auto;">
+            Schadeverzekering voor Inzittenden
+          </label>
+
+          <label class="row muted small" style="gap:8px;">
+            <input type="checkbox" name="extra_rb" {% if r["extra_rb"] %}checked{% endif %} style="min-width:auto; width:auto;">
+            Rechtsbijstand Verkeer
+          </label>
+
+          <input name="revision_of" placeholder="Revision of (opt.)" value="{{ r['revision_of'] or '' }}" />
+          <input name="revision_no" placeholder="Revision no" value="{{ r['revision_no'] if r['revision_no'] is not none else '' }}" />
+
+          <button class="btn primary" type="submit">Opslaan</button>
+        </form>
+      </div>
+
+      <div class="mobile-section">
+        <h4>Status</h4>
+
+        {% if r["is_blocked"] %}
+          <div class="muted small">{{ r["block_reason"] or "—" }}</div>
+        {% endif %}
+
+        <form method="post" action="{{ url_for('set_decision', offer_no=r['offer_no']) }}" class="grid" style="gap:8px; margin-top:10px;">
+          <input type="hidden" name="next" value="{{ request.full_path }}">
+          <select name="decision">
+            <option value="open" {% if (r["decision_status"] or "")=="open" %}selected{% endif %}>Open</option>
+            <option value="akkoord" {% if (r["decision_status"] or "")=="akkoord" %}selected{% endif %}>Akkoord</option>
+            <option value="niet_akkoord" {% if (r["decision_status"] or "")=="niet_akkoord" %}selected{% endif %}>Niet akkoord</option>
+          </select>
+          <button class="btn" type="submit">Beslissing opslaan</button>
+        </form>
+      </div>
+
+      <div class="mobile-section">
+        <h4>Historie</h4>
+        <div class="muted small">Aangemaakt door: <b>{{ r["created_by"] or "—" }}</b></div>
+        <div class="muted small">Laatst aangepast door: <b>{{ r["updated_by"] or "—" }}</b></div>
+        <div class="muted small">Laatst aangepast op: <b>{{ r["updated_at"] or "—" }}</b></div>
+      </div>
+
+      <div class="mobile-section">
+        <h4>Acties</h4>
+
+        <div class="grid" style="gap:8px;">
+          <form method="post" action="{{ url_for('export_one_offer', offer_no=r['offer_no']) }}" style="margin:0;">
+            <input type="hidden" name="next" value="{{ request.full_path }}">
+            <button class="btn ok" type="submit">Export</button>
+          </form>
+
+          {% if r["offer_pdf_path"] %}
+            <a class="btn" href="{{ url_for('get_file') }}?path={{ r['offer_pdf_path'] }}">PDF openen</a>
+          {% endif %}
+          {% if r["eml_path"] %}
+            <a class="btn" href="{{ url_for('get_file') }}?path={{ r['eml_path'] }}">MSG openen</a>
+          {% endif %}
+          {% if r["post_letter_path"] %}
+            <a class="btn" href="{{ url_for('get_file') }}?path={{ r['post_letter_path'] }}">Postbrief openen</a>
+          {% endif %}
+
+          {% if (r["email"] or "")|trim == "" %}
+            <a class="btn" href="{{ url_for('download_postbrief', offer_no=r['offer_no']) }}">Genereer postbrief</a>
+          {% endif %}
+
+          <form method="post" action="{{ url_for('delete_offer', offer_no=r['offer_no']) }}" onsubmit="return confirm('Offerte {{ r['offer_no'] }} verwijderen?');" style="margin:0;">
+            <button class="btn danger" type="submit">Verwijder</button>
+          </form>
+        </div>
+      </div>
+    </div>
+  {% endfor %}
+</div>
+
 <script>
 async function npSearch(offerNo, q){
   const sel = document.getElementById("np_select_" + offerNo);
@@ -220,6 +465,30 @@ async function npSearch(offerNo, q){
 function npPick(offerNo){
   const sel = document.getElementById("np_select_" + offerNo);
   const hid = document.getElementById("np_id_" + offerNo);
+  hid.value = sel.value || "";
+}
+
+async function npSearchMobile(offerNo, q){
+  const sel = document.getElementById("np_select_m_" + offerNo);
+  const hid = document.getElementById("np_id_m_" + offerNo);
+  hid.value = "";
+  sel.innerHTML = '<option value="">— kies uit resultaten —</option>';
+
+  const url = "/no-plate/search?q=" + encodeURIComponent(q || "");
+  const res = await fetch(url);
+  const data = await res.json();
+
+  (data.items || []).forEach(it => {
+    const opt = document.createElement("option");
+    opt.value = it.id;
+    opt.textContent = it.label || ("#" + it.id);
+    sel.appendChild(opt);
+  });
+}
+
+function npPickMobile(offerNo){
+  const sel = document.getElementById("np_select_m_" + offerNo);
+  const hid = document.getElementById("np_id_m_" + offerNo);
   hid.value = sel.value || "";
 }
 </script>

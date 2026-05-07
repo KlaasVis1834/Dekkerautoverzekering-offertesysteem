@@ -7,3 +7,4 @@ python-docx
 jinja2
 python-dotenv
 requests
+werkzeug

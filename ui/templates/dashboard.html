@@ -1,0 +1,55 @@
+{% extends "base.html" %}
+{% block content %}
+
+<div class="grid grid-2">
+  <div class="kpi">
+    <div>
+      <div class="t">Totaal offertes</div>
+      <div class="n">{{ total }}</div>
+    </div>
+    <span class="badge">Database</span>
+  </div>
+
+  <div class="kpi">
+    <div>
+      <div class="t">Klaar voor verzending</div>
+      <div class="n">{{ open_deliveries }}</div>
+    </div>
+    <span class="badge">Email/Post</span>
+  </div>
+</div>
+
+<div style="height:14px"></div>
+
+<div class="card">
+  <div class="row" style="justify-content:space-between">
+    <div>
+      <h3 style="margin:0">Acties</h3>
+      <div class="muted small">
+        Denylist:
+        {% if denylist_exists %}
+          <b>aanwezig</b>
+        {% else %}
+          <b>niet gevonden</b>
+        {% endif %}
+      </div>
+
+      {% if last_batch_id %}
+        <div class="muted small">Laatste batch: <b>{{ last_batch_id }}</b></div>
+      {% endif %}
+    </div>
+
+    <div class="row">
+      <a class="btn primary" href="{{ url_for('import_page') }}">Import Excel</a>
+
+      <form method="post" action="{{ url_for('export_last_batch') }}">
+        <button class="btn ok" type="submit">Export laatste batch</button>
+      </form>
+
+      <a class="btn" href="{{ url_for('offers') }}">Naar offertes</a>
+    </div>
+  </div>
+
+</div>
+
+{% endblock %}

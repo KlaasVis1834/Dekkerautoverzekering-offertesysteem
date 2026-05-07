@@ -1,0 +1,1629 @@
+# ui/server.py
+import sys
+import time
+import re
+from pathlib import Path
+
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
+
+from datetime import datetime
+import sqlite3
+
+from flask import (
+    Flask,
+    render_template,
+    request,
+    redirect,
+    url_for,
+    flash,
+    send_file,
+    jsonify,
+)
+
+from importers import import_excel, get_last_batch_id  # noqa
+from outlook_msg import write_msg_outlook  # noqa
+from voertuigdata import get_vehicle_info  # noqa
+from rules import bepaal_dekking  # noqa
+from rolls_kiwa import get_meldcode_en_type  # noqa
+from pdfgen import generate_offer_pdf  # noqa
+from postgen import generate_post_letter_pdf  # noqa
+from mailgen import (
+    load_template,
+    render_template as render_mail_template,
+    guess_aanhef_en_achternaam,
+)  # noqa
+
+AANVRAAG_LINK = "https://www.klaasvis.online/aanvraagformulier/"
+
+app = Flask(__name__)
+app.secret_key = "dekker-offertesysteem-local"
+
+DB_PATH = PROJECT_ROOT / "data" / "app.db"
+
+
+# -----------------------------
+# DB helpers
+# -----------------------------
+def connect():
+    conn = sqlite3.connect(DB_PATH, timeout=30)
+    conn.row_factory = sqlite3.Row
+    try:
+        conn.execute("PRAGMA busy_timeout = 30000")
+        conn.execute("PRAGMA journal_mode=WAL")
+    except Exception:
+        pass
+    return conn
+
+
+def _table_columns(conn, table_name: str) -> set[str]:
+    cols = set()
+    try:
+        rows = conn.execute(f"PRAGMA table_info({table_name})").fetchall()
+        for r in rows:
+            cols.add(str(r["name"]))
+    except Exception:
+        pass
+    return cols
+
+
+def _ensure_column(conn, table: str, col: str, ddl_type: str):
+    cols = _table_columns(conn, table)
+    if col in cols:
+        return
+    conn.execute(f"ALTER TABLE {table} ADD COLUMN {col} {ddl_type}")
+
+
+def ensure_db():
+    DB_PATH.parent.mkdir(parents=True, exist_ok=True)
+    with connect() as conn:
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS offers (
+                offer_no TEXT PRIMARY KEY,
+                created_at TEXT,
+                month_key TEXT,
+                batch_id TEXT,
+
+                klantnaam TEXT,
+                klant_type TEXT,
+
+                adres TEXT,
+                postcode TEXT,
+                plaats TEXT,
+                telefoon TEXT,
+                email TEXT,
+
+                kenteken TEXT,
+                merk TEXT,
+                model TEXT,
+                type_model TEXT,
+
+                voertuig_type TEXT,
+                bouwjaar INTEGER,
+
+                regio INTEGER,
+                dekking TEXT,
+                benodigde_svj INTEGER,
+
+                delivery_method TEXT,
+                delivery_status TEXT,
+
+                offer_pdf_path TEXT,
+                eml_path TEXT,
+                post_letter_path TEXT,
+
+                is_blocked INTEGER DEFAULT 0,
+                block_reason TEXT,
+                block_note TEXT,
+
+                follow_up_due_at TEXT,
+                call_status TEXT DEFAULT 'open',
+                decision_status TEXT DEFAULT 'open',
+
+                call_notes TEXT,
+                last_call_at TEXT
+            )
+            """
+        )
+
+        # ✅ mini-migraties
+        _ensure_column(conn, "offers", "maandpremie", "REAL")
+        _ensure_column(conn, "offers", "dienstverlening_bedrag", "REAL")
+
+        _ensure_column(conn, "offers", "svj_override", "INTEGER")
+        _ensure_column(conn, "offers", "is_bestaande_klant", "INTEGER DEFAULT 0")
+
+        _ensure_column(conn, "offers", "revision_of", "TEXT")
+        _ensure_column(conn, "offers", "revision_no", "INTEGER DEFAULT 0")
+
+        _ensure_column(conn, "offers", "dekking_override", "TEXT")
+        _ensure_column(conn, "offers", "extra_svi", "INTEGER DEFAULT 0")
+        _ensure_column(conn, "offers", "extra_rb", "INTEGER DEFAULT 0")
+
+        # =========================
+        # ✅ No-plate voertuigen DB
+        # =========================
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS no_plate_vehicles (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+
+                merk TEXT,
+                model TEXT,
+                type_model TEXT,
+
+                voertuig_type TEXT,   -- personenauto/bestelauto
+                bouwjaar INTEGER,
+
+                brandstof TEXT,       -- ✅ nieuw
+                cataloguswaarde TEXT, -- legacy (oud)
+                gewicht TEXT,
+
+                -- ✅ nieuw: 2 cataloguswaardes
+                cataloguswaarde_part TEXT,
+                cataloguswaarde_zak  TEXT,
+
+                premie_part_r1 REAL,
+                premie_part_r2 REAL,
+                premie_part_r3 REAL,
+                premie_part_r4 REAL,
+
+                premie_zak_r1 REAL,
+                premie_zak_r2 REAL,
+                premie_zak_r3 REAL,
+                premie_zak_r4 REAL,
+
+                created_at TEXT
+            )
+            """
+        )
+
+        # ✅ migraties bestaande DB's
+        _ensure_column(conn, "no_plate_vehicles", "brandstof", "TEXT")
+        _ensure_column(conn, "no_plate_vehicles", "cataloguswaarde_part", "TEXT")
+        _ensure_column(conn, "no_plate_vehicles", "cataloguswaarde_zak", "TEXT")
+
+        # ✅ koppeling no-plate voertuig + overrides per offerte
+        _ensure_column(conn, "offers", "no_plate_vehicle_id", "INTEGER")
+        _ensure_column(conn, "offers", "np_gewicht", "TEXT")
+        _ensure_column(conn, "offers", "np_maandpremie", "REAL")
+
+        # legacy (bestaat al bij jou): np_cataloguswaarde
+        _ensure_column(conn, "offers", "np_cataloguswaarde", "TEXT")
+
+        # ✅ nieuw (optioneel): overrides per klanttype
+        _ensure_column(conn, "offers", "np_cataloguswaarde_part", "TEXT")
+        _ensure_column(conn, "offers", "np_cataloguswaarde_zak", "TEXT")
+
+        conn.commit()
+
+
+def denylist_exists() -> bool:
+    p = PROJECT_ROOT / "data" / "denylist.docx"
+    return p.exists()
+
+
+def safe_relpath(p: Path) -> str:
+    try:
+        return str(p.relative_to(PROJECT_ROOT)).replace("\\", "/")
+    except Exception:
+        return str(p).replace("\\", "/")
+
+
+def _parse_float(v):
+    if v is None:
+        return None
+    s = str(v).strip()
+    if not s:
+        return None
+    s = s.replace("€", "").strip()
+    s = s.replace(".", "").replace(",", ".") if ("," in s and "." in s) else s.replace(",", ".")
+    try:
+        return float(s)
+    except Exception:
+        return None
+
+
+def _parse_int(v):
+    if v is None:
+        return None
+    s = str(v).strip()
+    if not s:
+        return None
+    try:
+        return int(float(s))
+    except Exception:
+        return None
+
+
+def _load_template_safe(rel_path: str):
+    """
+    Probeer template te laden; als hij niet bestaat -> None (geen crash).
+    """
+    try:
+        return load_template(rel_path)
+    except Exception:
+        return None
+
+
+def _execute_retry(
+    conn: sqlite3.Connection,
+    sql: str,
+    params=(),
+    retries: int = 8,
+    sleep_s: float = 0.25,
+):
+    """
+    SQLite 'database is locked' afvangen met retries.
+    """
+    last_err = None
+    for _ in range(retries):
+        try:
+            return conn.execute(sql, params)
+        except sqlite3.OperationalError as e:
+            last_err = e
+            if "locked" in str(e).lower():
+                time.sleep(sleep_s)
+                continue
+            raise
+    raise last_err  # type: ignore[misc]
+
+
+def _np_label(r: sqlite3.Row) -> str:
+    parts = [
+        str(r["merk"] or "").strip(),
+        str(r["model"] or "").strip(),
+        str(r["type_model"] or "").strip(),
+    ]
+    return " ".join([p for p in parts if p]).strip() or f"No-plate #{r['id']}"
+
+
+def _pick_np_premie(np_row: sqlite3.Row, klant_type: str, regio: int):
+    kt = (klant_type or "").strip().lower()
+    try:
+        r = int(regio)
+    except Exception:
+        r = 0
+
+    if r not in (1, 2, 3, 4):
+        return None
+
+    col = f"premie_zak_r{r}" if kt == "zakelijk" else f"premie_part_r{r}"
+    v = np_row[col]
+    try:
+        return float(v) if v is not None and str(v).strip() != "" else None
+    except Exception:
+        return None
+
+
+def _pick_np_catalogus(np_row: sqlite3.Row, klant_type: str, offer_row: sqlite3.Row):
+    """
+    ✅ Kies juiste cataloguswaarde:
+    - particulier: offers.np_cataloguswaarde_part -> fallback offers.np_cataloguswaarde -> fallback np.cataloguswaarde_part -> fallback np.cataloguswaarde (legacy)
+    - zakelijk:   offers.np_cataloguswaarde_zak  -> fallback offers.np_cataloguswaarde -> fallback np.cataloguswaarde_zak  -> fallback np.cataloguswaarde (legacy)
+
+    Belangrijk: deze waarden zijn al "in context" (dus niet opnieuw omrekenen in pdfgen).
+    """
+    kt = (klant_type or "").strip().lower()
+
+    if kt == "zakelijk":
+        o = (offer_row["np_cataloguswaarde_zak"] or "").strip() if "np_cataloguswaarde_zak" in offer_row.keys() else ""
+        if o:
+            return o
+        o_legacy = (offer_row["np_cataloguswaarde"] or "").strip() if "np_cataloguswaarde" in offer_row.keys() else ""
+        if o_legacy:
+            return o_legacy
+        v = (np_row["cataloguswaarde_zak"] or "").strip() if "cataloguswaarde_zak" in np_row.keys() else ""
+        if v:
+            return v
+        return (np_row["cataloguswaarde"] or "").strip()  # legacy
+
+    # particulier
+    o = (offer_row["np_cataloguswaarde_part"] or "").strip() if "np_cataloguswaarde_part" in offer_row.keys() else ""
+    if o:
+        return o
+    o_legacy = (offer_row["np_cataloguswaarde"] or "").strip() if "np_cataloguswaarde" in offer_row.keys() else ""
+    if o_legacy:
+        return o_legacy
+    v = (np_row["cataloguswaarde_part"] or "").strip() if "cataloguswaarde_part" in np_row.keys() else ""
+    if v:
+        return v
+    return (np_row["cataloguswaarde"] or "").strip()  # legacy
+
+
+# -----------------------------
+# ✅ Kenteken helpers (NIEUW)
+# -----------------------------
+def _kenteken_lookup_value(kenteken: str) -> str:
+    """
+    Voor lookup (RDW/rolls): zonder streepjes/spaties, uppercase.
+    """
+    return re.sub(r"[^A-Za-z0-9]", "", (kenteken or "")).upper().strip()
+
+
+def _format_nl_kenteken(kenteken: str) -> str:
+    """
+    Voor weergave in PDF: probeer NL-indeling met streepjes terug te zetten.
+    - Als er al '-' in zit: normaliseer alleen.
+    - Anders: op basis van letter/cijfer patroon splitsen.
+    """
+    raw = (kenteken or "").strip().upper()
+    if not raw:
+        return ""
+
+    if "-" in raw:
+        # normaliseer: alleen alnum per deel, join met '-'
+        parts = [re.sub(r"[^A-Z0-9]", "", p) for p in raw.split("-")]
+        parts = [p for p in parts if p]
+        return "-".join(parts)
+
+    s = _kenteken_lookup_value(raw)
+    if len(s) != 6:
+        return s  # onbekende lengte -> toon zoals het is (zonder rare dingen)
+
+    # patronen voor 6-tekens kentekens (NL combinaties)
+    # 2-2-2
+    if re.match(r"^[A-Z]{2}\d{2}\d{2}$", s):  # XX9999 -> XX-99-99
+        return f"{s[:2]}-{s[2:4]}-{s[4:]}"
+    if re.match(r"^\d{2}[A-Z]{2}\d{2}$", s):  # 99XX99 -> 99-XX-99
+        return f"{s[:2]}-{s[2:4]}-{s[4:]}"
+    if re.match(r"^[A-Z]{2}\d{2}[A-Z]{2}$", s):  # XX99XX -> XX-99-XX
+        return f"{s[:2]}-{s[2:4]}-{s[4:]}"
+    if re.match(r"^[A-Z]{4}\d{2}$", s):  # XXXX99 -> XX-XX-99
+        return f"{s[:2]}-{s[2:4]}-{s[4:]}"
+    if re.match(r"^\d{2}[A-Z]{4}$", s):  # 99XXXX -> 99-XX-XX
+        return f"{s[:2]}-{s[2:4]}-{s[4:]}"
+    if re.match(r"^\d{4}[A-Z]{2}$", s):  # 9999XX -> 99-99-XX
+        return f"{s[:2]}-{s[2:4]}-{s[4:]}"
+
+    # 1-3-2  (X-999-XX)  -> voorbeeld S453RX
+    if re.match(r"^[A-Z]\d{3}[A-Z]{2}$", s):
+        return f"{s[:1]}-{s[1:4]}-{s[4:]}"
+    # 1-3-2  (9-XXX-99)
+    if re.match(r"^\d[A-Z]{3}\d{2}$", s):
+        return f"{s[:1]}-{s[1:4]}-{s[4:]}"
+
+    # 2-3-1 (XX-999-X) / (99-XXX-9)
+    if re.match(r"^[A-Z]{2}\d{3}[A-Z]$", s):
+        return f"{s[:2]}-{s[2:5]}-{s[5:]}"
+    if re.match(r"^\d{2}[A-Z]{3}\d$", s):
+        return f"{s[:2]}-{s[2:5]}-{s[5:]}"
+
+    # 3-2-1 (XXX-99-X)
+    if re.match(r"^[A-Z]{3}\d{2}[A-Z]$", s):
+        return f"{s[:3]}-{s[3:5]}-{s[5:]}"
+
+    # 1-2-3 (X-99-XXX)
+    if re.match(r"^[A-Z]\d{2}[A-Z]{3}$", s):
+        return f"{s[:1]}-{s[1:3]}-{s[3:]}"
+
+    # fallback
+    return f"{s[:2]}-{s[2:4]}-{s[4:]}"
+
+
+# -----------------------------
+# ✅ PDF bestandsnaam helpers
+# -----------------------------
+def _safe_filename(s: str) -> str:
+    """
+    Windows-safe bestandsnaam:
+    verwijdert <>:"/\\|?* en control chars, trims, dubbele spaties eruit.
+    """
+    s = (s or "").strip()
+    s = re.sub(r"[<>:\"/\\\\|?*]", " ", s)
+    s = re.sub(r"[\x00-\x1f]", " ", s)
+    s = re.sub(r"\s+", " ", s).strip()
+    return s
+
+
+def _strip_known_titles(name: str) -> str:
+    s = (name or "").strip()
+    s = re.sub(r"^(de\s+heer|dhr\.?|heer)\s+", "", s, flags=re.I)
+    s = re.sub(r"^(mevrouw|mevr\.?|mw\.?)\s+", "", s, flags=re.I)
+    s = re.sub(r"^(mr\.?|dr\.?|ing\.?|ir\.?)\s+", "", s, flags=re.I)
+    return s.strip()
+
+
+def _initials_from_name(full_name: str, achternaam: str) -> str:
+    """
+    Probeert voorletters uit full_name te halen.
+    - Als er al A. B. in staat: behoudt dat.
+    - Anders: van voornamen initialen maken.
+    """
+    full = _strip_known_titles(full_name)
+    a = (achternaam or "").strip()
+
+    if a and full.lower().endswith(a.lower()):
+        base = full[: len(full) - len(a)].strip()
+    else:
+        base = full
+
+    if not base:
+        return ""
+
+    tokens = [t for t in re.split(r"\s+", base) if t.strip()]
+    existing = [t for t in tokens if "." in t]
+    if existing:
+        return " ".join(existing).strip()
+
+    initials = []
+    for t in tokens:
+        parts = re.split(r"[-/]", t)
+        for p in parts:
+            p = re.sub(r"[^A-Za-zÀ-ÿ]", "", p)
+            if p:
+                initials.append(p[0].upper() + ".")
+    return " ".join(initials).strip()
+
+
+def _klant_display_for_filename(klantnaam: str, klant_type: str) -> str:
+    kt = (klant_type or "").strip().lower()
+    kn = (klantnaam or "").strip()
+
+    # zakelijk -> alleen bedrijfsnaam
+    if kt == "zakelijk":
+        return kn
+
+    # particulier/prospect -> aanhef + voorletters + achternaam
+    aanhef, achternaam = guess_aanhef_en_achternaam(kn)
+    aanhef = (aanhef or "").strip()
+    achternaam = (achternaam or "").strip()
+
+    initials = _initials_from_name(kn, achternaam)
+
+    parts = [p for p in [aanhef, initials, achternaam] if p]
+    return " ".join(parts).strip() or kn
+
+
+def _short_offer_no_for_filename(offer_no: str) -> str:
+    """
+    2026-02-000123 -> 2026-02-123
+    Laat prefix intact, strip alleen leading zeros in het LAATSTE deel.
+    """
+    s = (offer_no or "").strip()
+    if not s:
+        return s
+
+    parts = s.split("-")
+    if not parts:
+        return s
+
+    last = parts[-1]
+    if last.isdigit():
+        last2 = last.lstrip("0") or "0"
+        parts[-1] = last2
+        return "-".join(parts)
+
+    return s
+
+
+def _offer_pdf_filename_base(klantnaam: str, klant_type: str, offer_no: str) -> str:
+    display = _klant_display_for_filename(klantnaam, klant_type)
+    short_no = _short_offer_no_for_filename(offer_no)
+    name = f"Verzekeringsvoorstel voor {display} - {short_no}"
+    return _safe_filename(name)
+
+
+def _normalize_dekking_override(v: str) -> str:
+    s = (v or "").strip().lower()
+    if not s:
+        return ""
+    if s in ("wa",):
+        return "WA"
+    if s in ("wa beperkt casco", "wa / beperkt casco", "beperkt casco"):
+        return "WA / Beperkt Casco"
+    if s in (
+        "allrisk",
+        "wa casco compleet",
+        "wa / casco compleet",
+        "wa / casco compleet (allrisk)",
+        "casco compleet",
+        "casco compleet (allrisk)",
+    ):
+        return "WA / Casco Compleet (Allrisk)"
+    return (v or "").strip()
+
+
+def _compose_dekking(auto_dekking: str, dekking_override: str, extra_svi, extra_rb) -> str:
+    dekking = _normalize_dekking_override(dekking_override) or (auto_dekking or "").strip()
+
+    parts = [p.strip() for p in str(dekking).split("/") if p.strip()]
+    seen = {p.lower() for p in parts}
+
+    if int(extra_svi or 0) == 1:
+        svi = "Schadeverzekering voor Inzittenden"
+        if svi.lower() not in seen and "schadeverzekering inzittenden" not in seen:
+            parts.append(svi)
+            seen.add(svi.lower())
+
+    if int(extra_rb or 0) == 1:
+        rb = "Rechtsbijstandsverzekering Verkeer"
+        if rb.lower() not in seen:
+            parts.append(rb)
+            seen.add(rb.lower())
+
+    return " / ".join(parts)
+
+
+# -----------------------------
+# Routes
+# -----------------------------
+@app.route("/")
+def dashboard():
+    ensure_db()
+    last_batch_id = get_last_batch_id()
+
+    with connect() as conn:
+        total = conn.execute("SELECT COUNT(*) AS c FROM offers").fetchone()["c"]
+        open_deliveries = conn.execute(
+            """
+            SELECT COUNT(*) AS c FROM offers
+            WHERE is_blocked = 0 AND delivery_status IN ('email_klaar','post_klaar')
+            """
+        ).fetchone()["c"]
+        blocked = conn.execute("SELECT COUNT(*) AS c FROM offers WHERE is_blocked = 1").fetchone()["c"]
+
+    return render_template(
+        "dashboard.html",
+        total=total,
+        open_deliveries=open_deliveries,
+        blocked=blocked,
+        last_batch_id=last_batch_id,
+        denylist_exists=denylist_exists(),
+        db_path=str(DB_PATH),
+    )
+
+
+@app.route("/followups")
+def followups():
+    flash("Bel-lijst is uitgeschakeld. Je zit nu op Offertes.", "ok")
+    return redirect(url_for("offers"))
+
+
+@app.route("/import", methods=["GET", "POST"])
+def import_page():
+    ensure_db()
+
+    inbox_dir = PROJECT_ROOT / "data" / "inbox"
+    inbox_dir.mkdir(parents=True, exist_ok=True)
+
+    fixed_deny = PROJECT_ROOT / "data" / "denylist.docx"
+
+    if request.method == "POST":
+        excel_file = request.files.get("excel")
+        deny_file = request.files.get("denylist")
+
+        if not excel_file or excel_file.filename.strip() == "":
+            flash("Kies een Excel bestand.", "error")
+            return redirect(url_for("import_page"))
+
+        excel_path = inbox_dir / excel_file.filename
+        excel_file.save(excel_path)
+
+        if deny_file and deny_file.filename.strip():
+            fixed_deny.parent.mkdir(parents=True, exist_ok=True)
+            deny_file.save(fixed_deny)
+            flash("Denylist geüpdatet.", "ok")
+
+        deny_path = str(fixed_deny) if fixed_deny.exists() else None
+
+        try:
+            n = import_excel(str(excel_path), deny_path)
+            flash(f"Import gelukt: {n} rijen verwerkt.", "ok")
+        except Exception as e:
+            flash(f"Import fout: {e}", "error")
+
+        return redirect(url_for("offers"))
+
+    excel_candidates = sorted(inbox_dir.glob("*.xlsx"), key=lambda p: p.stat().st_mtime, reverse=True)[:10]
+
+    return render_template(
+        "import.html",
+        excel_candidates=[safe_relpath(p) for p in excel_candidates],
+        denylist_present=fixed_deny.exists(),
+        denylist_path=safe_relpath(fixed_deny) if fixed_deny.exists() else None,
+    )
+
+
+@app.route("/offers")
+def offers():
+    ensure_db()
+
+    q = request.args.get("q", "").strip()
+    month = request.args.get("month", "").strip()
+    delivery = request.args.get("delivery", "").strip()
+
+    sql = """
+    SELECT offer_no, created_at, month_key, batch_id,
+           klantnaam, klant_type, email, telefoon,
+           kenteken, merk, model, type_model, voertuig_type, bouwjaar,
+           regio, dekking,
+           delivery_method, delivery_status, offer_pdf_path, eml_path, post_letter_path,
+           is_blocked, block_reason, block_note,
+           follow_up_due_at, call_status, decision_status,
+           maandpremie, dienstverlening_bedrag,
+           svj_override, is_bestaande_klant,
+           revision_of, revision_no,
+           no_plate_vehicle_id, np_gewicht, np_maandpremie, np_cataloguswaarde, np_cataloguswaarde_part, np_cataloguswaarde_zak
+    FROM offers
+    WHERE 1=1
+    """
+    params = []
+
+    if month:
+        sql += " AND month_key = ?"
+        params.append(month)
+
+    if q:
+        sql += " AND (klantnaam LIKE ? OR kenteken LIKE ? OR email LIKE ? OR offer_no LIKE ?)"
+        like = f"%{q}%"
+        params.extend([like, like, like, like])
+
+    if delivery and delivery != "all":
+        if delivery == "geblokkeerd":
+            sql += " AND is_blocked = 1"
+        else:
+            sql += " AND is_blocked = 0 AND delivery_status = ?"
+            params.append(delivery)
+
+    sql += """
+    ORDER BY
+        CASE
+            WHEN COALESCE(offer_pdf_path,'')='' AND COALESCE(eml_path,'')='' AND COALESCE(post_letter_path,'')=''
+            THEN 0 ELSE 1
+        END ASC,
+        CASE WHEN lower(klant_type)='zakelijk' THEN 1 ELSE 0 END ASC,
+        CAST(COALESCE(regio, 999) AS INTEGER) ASC,
+        created_at DESC,
+        offer_no DESC
+    LIMIT 500
+    """
+
+    with connect() as conn:
+        rows = conn.execute(sql, params).fetchall()
+        months = conn.execute(
+            """
+            SELECT DISTINCT month_key FROM offers
+            WHERE month_key IS NOT NULL AND month_key != ''
+            ORDER BY month_key DESC
+            LIMIT 24
+            """
+        ).fetchall()
+
+    return render_template(
+        "offers.html",
+        rows=rows,
+        q=q,
+        month=month,
+        delivery=delivery or "all",
+        months=[r["month_key"] for r in months],
+    )
+
+
+@app.route("/blocked")
+def blocked():
+    ensure_db()
+    with connect() as conn:
+        rows = conn.execute(
+            """
+            SELECT offer_no, klantnaam, kenteken, email, block_reason, block_note, created_at
+            FROM offers
+            WHERE is_blocked = 1
+            ORDER BY created_at DESC
+            LIMIT 500
+            """
+        ).fetchall()
+    return render_template("blocked.html", rows=rows)
+
+
+@app.post("/offer/<offer_no>/update-meta")
+def update_offer_meta(offer_no: str):
+    """
+    Bewaart meta:
+    - maandpremie
+    - dienstverlening_bedrag = 18%
+    - svj_override
+    - handmatige dekking + extra dekkingen
+    - is_bestaande_klant
+    - revision_of + revision_no
+    - np_maandpremie (override no-plate premie)
+    - np_cataloguswaarde_part / np_cataloguswaarde_zak (optioneel later via offers.html)
+    """
+    ensure_db()
+    next_url = request.form.get("next") or url_for("offers")
+
+    maandpremie_raw = (request.form.get("maandpremie") or "").strip()
+    np_maandpremie_raw = (request.form.get("np_maandpremie") or "").strip()
+    svj_raw = (request.form.get("svj_override") or "").strip()
+    dekking_override = _normalize_dekking_override(request.form.get("dekking_override") or "") or None
+    extra_svi = 1 if request.form.get("extra_svi") in ("1", "on", "true", "True") else 0
+    extra_rb = 1 if request.form.get("extra_rb") in ("1", "on", "true", "True") else 0
+
+    is_bestaande_klant = 1 if request.form.get("is_bestaande_klant") in ("1", "on", "true", "True") else 0
+
+    revision_of = (request.form.get("revision_of") or "").strip() or None
+    revision_no_raw = (request.form.get("revision_no") or "").strip()
+
+    maandpremie = _parse_float(maandpremie_raw)
+    dienstverlening = round(maandpremie * 0.18, 2) if maandpremie is not None else None
+
+    np_maandpremie = _parse_float(np_maandpremie_raw)
+
+    svj_override = _parse_int(svj_raw)
+    revision_no = _parse_int(revision_no_raw)
+    if revision_of is None:
+        revision_no = 0
+
+    with connect() as conn:
+        _execute_retry(
+            conn,
+            """
+            UPDATE offers
+            SET maandpremie = ?,
+                dienstverlening_bedrag = ?,
+                np_maandpremie = ?,
+                svj_override = ?,
+                dekking_override = ?,
+                extra_svi = ?,
+                extra_rb = ?,
+                is_bestaande_klant = ?,
+                revision_of = ?,
+                revision_no = ?
+            WHERE offer_no = ?
+            """,
+            (
+                maandpremie,
+                dienstverlening,
+                np_maandpremie,
+                svj_override,
+                dekking_override,
+                extra_svi,
+                extra_rb,
+                is_bestaande_klant,
+                revision_of,
+                revision_no,
+                offer_no,
+            ),
+        )
+        conn.commit()
+
+    flash(f"Gegevens opgeslagen voor {offer_no}.", "ok")
+    return redirect(next_url)
+
+
+@app.post("/offer/<offer_no>/decision")
+def set_decision(offer_no: str):
+    ensure_db()
+
+    decision = (request.form.get("decision") or "").strip()
+    next_url = request.form.get("next") or url_for("offers")
+
+    if decision not in ("akkoord", "niet_akkoord", "open"):
+        flash("Ongeldige keuze.", "error")
+        return redirect(next_url)
+
+    with connect() as conn:
+        new_call_status = "afgehandeld" if decision in ("akkoord", "niet_akkoord") else "open"
+        _execute_retry(
+            conn,
+            """
+            UPDATE offers
+            SET decision_status = ?,
+                call_status = ?,
+                last_call_at = CASE WHEN ? != 'open' THEN date('now') ELSE last_call_at END
+            WHERE offer_no = ?
+            """,
+            (decision, new_call_status, decision, offer_no),
+        )
+        conn.commit()
+
+    flash(f"Beslissing opgeslagen: {offer_no} → {decision}", "ok")
+    return redirect(next_url)
+
+
+@app.post("/offer/<offer_no>/delete")
+def delete_offer(offer_no: str):
+    ensure_db()
+
+    with connect() as conn:
+        row = conn.execute(
+            "SELECT offer_pdf_path, eml_path, post_letter_path FROM offers WHERE offer_no = ?",
+            (offer_no,),
+        ).fetchone()
+
+        if not row:
+            flash("Offerte niet gevonden.", "error")
+            return redirect(url_for("offers"))
+
+        for rel in [row["offer_pdf_path"], row["eml_path"], row["post_letter_path"]]:
+            if rel:
+                p = (PROJECT_ROOT / rel).resolve()
+                try:
+                    if p.exists() and PROJECT_ROOT in p.parents:
+                        p.unlink()
+                except Exception:
+                    pass
+
+        _execute_retry(conn, "DELETE FROM offers WHERE offer_no = ?", (offer_no,))
+        conn.commit()
+
+    flash(f"Offerte verwijderd: {offer_no}", "ok")
+    return redirect(url_for("offers"))
+
+
+@app.get("/offer/<offer_no>/download-postbrief")
+def download_postbrief(offer_no: str):
+    ensure_db()
+    now = datetime.now()
+
+    with connect() as conn:
+        r = conn.execute("SELECT * FROM offers WHERE offer_no = ?", (offer_no,)).fetchone()
+        if not r:
+            flash("Offerte niet gevonden.", "error")
+            return redirect(url_for("offers"))
+
+        email = (r["email"] or "").strip()
+        if email:
+            flash("Deze klant heeft een e-mailadres; postbrief is niet nodig.", "error")
+            return redirect(url_for("offers"))
+
+        db_path = PROJECT_ROOT / "data" / "app.db"
+        vinfo = get_vehicle_info(
+            kenteken=r["kenteken"] or "",
+            merk=r["merk"] or "",
+            model=r["model"] or "",
+            db_path=db_path,
+        )
+
+        auto_str = " ".join([x for x in [vinfo.merk, vinfo.model] if x]).strip()
+
+        if r["post_letter_path"]:
+            existing = (PROJECT_ROOT / r["post_letter_path"]).resolve()
+            if existing.exists() and PROJECT_ROOT in existing.parents:
+                return send_file(existing, as_attachment=True, download_name=f"Postbrief_{offer_no}.pdf")
+
+        post_letter_path = generate_post_letter_pdf(
+            out_base_dir="data/post",
+            dt=now,
+            offer_no=offer_no,
+            klantnaam=r["klantnaam"] or "",
+            adres=r["adres"] or "",
+            postcode=r["postcode"] or "",
+            plaats=r["plaats"] or "",
+            auto=auto_str or "auto",
+            behandeld_door="Dirk Slootweg",
+        )
+
+        _execute_retry(
+            conn,
+            """
+            UPDATE offers
+            SET post_letter_path = ?,
+                delivery_method = 'post',
+                delivery_status = 'post_klaar'
+            WHERE offer_no = ?
+            """,
+            (post_letter_path, offer_no),
+        )
+        conn.commit()
+
+    abs_path = (PROJECT_ROOT / post_letter_path).resolve()
+    return send_file(abs_path, as_attachment=True, download_name=f"Postbrief_{offer_no}.pdf")
+
+
+# -----------------------------
+# No-plate routes
+# -----------------------------
+@app.route("/no-plate", methods=["GET", "POST"])
+def no_plate():
+    ensure_db()
+
+    if request.method == "POST":
+        vid = (request.form.get("id") or "").strip()
+
+        merk = (request.form.get("merk") or "").strip()
+        model = (request.form.get("model") or "").strip()
+        type_model = (request.form.get("type_model") or "").strip()
+
+        voertuig_type = (request.form.get("voertuig_type") or "personenauto").strip().lower()
+        if voertuig_type not in ("personenauto", "bestelauto"):
+            voertuig_type = "personenauto"
+
+        bouwjaar = _parse_int(request.form.get("bouwjaar"))
+
+        brandstof = (request.form.get("brandstof") or "").strip()
+        gewicht = (request.form.get("gewicht") or "").strip()
+
+        # ✅ 2 cataloguswaardes
+        catalogus_part = (request.form.get("cataloguswaarde_part") or "").strip()
+        catalogus_zak = (request.form.get("cataloguswaarde_zak") or "").strip()
+
+        # legacy veld (voor oude db's; vullen we desnoods met particulier)
+        catalogus_legacy = (request.form.get("cataloguswaarde") or "").strip()
+
+        def f(name):
+            return _parse_float((request.form.get(name) or "").strip())
+
+        data = (
+            merk, model, type_model,
+            voertuig_type, bouwjaar,
+            brandstof,
+            catalogus_legacy,
+            gewicht,
+            catalogus_part,
+            catalogus_zak,
+            f("premie_part_r1"), f("premie_part_r2"), f("premie_part_r3"), f("premie_part_r4"),
+            f("premie_zak_r1"), f("premie_zak_r2"), f("premie_zak_r3"), f("premie_zak_r4"),
+        )
+
+        with connect() as conn:
+            if vid:
+                _execute_retry(
+                    conn,
+                    """
+                    UPDATE no_plate_vehicles
+                    SET merk=?, model=?, type_model=?,
+                        voertuig_type=?, bouwjaar=?,
+                        brandstof=?,
+                        cataloguswaarde=?,
+                        gewicht=?,
+                        cataloguswaarde_part=?,
+                        cataloguswaarde_zak=?,
+                        premie_part_r1=?, premie_part_r2=?, premie_part_r3=?, premie_part_r4=?,
+                        premie_zak_r1=?, premie_zak_r2=?, premie_zak_r3=?, premie_zak_r4=?
+                    WHERE id=?
+                    """,
+                    data + (int(vid),),
+                )
+                conn.commit()
+                flash("No-plate voertuig bijgewerkt.", "ok")
+            else:
+                created_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+                _execute_retry(
+                    conn,
+                    """
+                    INSERT INTO no_plate_vehicles (
+                        merk, model, type_model,
+                        voertuig_type, bouwjaar,
+                        brandstof,
+                        cataloguswaarde,
+                        gewicht,
+                        cataloguswaarde_part,
+                        cataloguswaarde_zak,
+                        premie_part_r1, premie_part_r2, premie_part_r3, premie_part_r4,
+                        premie_zak_r1, premie_zak_r2, premie_zak_r3, premie_zak_r4,
+                        created_at
+                    ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                    """,
+                    data + (created_at,),
+                )
+                conn.commit()
+                flash("No-plate voertuig toegevoegd.", "ok")
+
+        return redirect(url_for("no_plate"))
+
+    q = (request.args.get("q") or "").strip()
+    with connect() as conn:
+        if q:
+            like = f"%{q}%"
+            rows = conn.execute(
+                """
+                SELECT * FROM no_plate_vehicles
+                WHERE merk LIKE ? OR model LIKE ? OR type_model LIKE ?
+                ORDER BY created_at DESC, id DESC
+                LIMIT 500
+                """,
+                (like, like, like),
+            ).fetchall()
+        else:
+            rows = conn.execute(
+                "SELECT * FROM no_plate_vehicles ORDER BY created_at DESC, id DESC LIMIT 500"
+            ).fetchall()
+
+    return render_template("no_plate.html", rows=rows, q=q)
+
+
+@app.post("/no-plate/<int:vid>/delete")
+def no_plate_delete(vid: int):
+    ensure_db()
+    with connect() as conn:
+        _execute_retry(conn, "DELETE FROM no_plate_vehicles WHERE id = ?", (vid,))
+        conn.commit()
+    flash("No-plate voertuig verwijderd.", "ok")
+    return redirect(url_for("no_plate"))
+
+
+@app.get("/no-plate/search")
+def no_plate_search():
+    ensure_db()
+    q = (request.args.get("q") or "").strip()
+    limit = 25
+
+    with connect() as conn:
+        if q:
+            like = f"%{q}%"
+            rows = conn.execute(
+                """
+                SELECT id, merk, model, type_model, voertuig_type
+                FROM no_plate_vehicles
+                WHERE merk LIKE ? OR model LIKE ? OR type_model LIKE ?
+                ORDER BY created_at DESC, id DESC
+                LIMIT ?
+                """,
+                (like, like, like, limit),
+            ).fetchall()
+        else:
+            rows = conn.execute(
+                """
+                SELECT id, merk, model, type_model, voertuig_type
+                FROM no_plate_vehicles
+                ORDER BY created_at DESC, id DESC
+                LIMIT ?
+                """,
+                (limit,),
+            ).fetchall()
+
+    items = []
+    for r in rows:
+        label = " ".join(
+            [
+                x
+                for x in [
+                    (r["merk"] or "").strip(),
+                    (r["model"] or "").strip(),
+                    (r["type_model"] or "").strip(),
+                ]
+                if x
+            ]
+        ).strip()
+        items.append(
+            {
+                "id": r["id"],
+                "label": label or f"#{r['id']}",
+                "voertuig_type": (r["voertuig_type"] or "").strip(),
+            }
+        )
+    return jsonify({"items": items})
+
+
+@app.post("/offer/<offer_no>/set-no-plate")
+def set_no_plate_for_offer(offer_no: str):
+    ensure_db()
+    next_url = request.form.get("next") or url_for("offers")
+    vid = (request.form.get("no_plate_vehicle_id") or "").strip()
+
+    if not vid.isdigit():
+        flash("Kies eerst een no-plate voertuig.", "error")
+        return redirect(next_url)
+
+    with connect() as conn:
+        np_row = conn.execute("SELECT * FROM no_plate_vehicles WHERE id = ?", (int(vid),)).fetchone()
+        if not np_row:
+            flash("No-plate voertuig niet gevonden.", "error")
+            return redirect(next_url)
+
+        # ✅ Forceer no-plate pad: kenteken leeg
+        _execute_retry(
+            conn,
+            """
+            UPDATE offers
+            SET no_plate_vehicle_id = ?,
+                kenteken = '',
+                merk = ?,
+                model = ?,
+                type_model = ?,
+                voertuig_type = COALESCE(NULLIF(?,''), voertuig_type),
+                bouwjaar = COALESCE(?, bouwjaar)
+            WHERE offer_no = ?
+            """,
+            (
+                int(vid),
+                (np_row["merk"] or "").strip(),
+                (np_row["model"] or "").strip(),
+                (np_row["type_model"] or "").strip(),
+                (np_row["voertuig_type"] or "").strip().lower(),
+                np_row["bouwjaar"],
+                offer_no,
+            ),
+        )
+        conn.commit()
+
+    flash(f"No-plate voertuig gekoppeld aan {offer_no}.", "ok")
+    return redirect(next_url)
+
+
+# -----------------------------
+# Export helpers
+# -----------------------------
+def _choose_mail_template(
+    klant_type: str,
+    is_bestaande_klant: bool,
+    revision_no: int,
+    tpl_def,
+    tpl_pro,
+    tpl_bestaand_part,
+    tpl_bestaand_zak,
+    tpl_aangepast,
+):
+    if revision_no > 0 and tpl_aangepast is not None:
+        return tpl_aangepast
+
+    if is_bestaande_klant:
+        if klant_type == "zakelijk" and tpl_bestaand_zak is not None:
+            return tpl_bestaand_zak
+        if klant_type != "zakelijk" and tpl_bestaand_part is not None:
+            return tpl_bestaand_part
+
+    return tpl_pro if klant_type == "prospect" else tpl_def
+
+
+def _subject_for_offer(klant_type: str, revision_no: int, offer_no: str) -> str:
+    if revision_no > 0:
+        return f"Aangepast verzekeringsvoorstel Dekkerautoverzekering {offer_no}"
+    if klant_type == "prospect":
+        return f"Indicatief verzekeringsvoorstel Dekkerautoverzekering {offer_no}"
+    return f"Verzekeringsvoorstel Dekkerautoverzekering {offer_no}"
+
+
+def _build_pdf_and_delivery(conn: sqlite3.Connection, r: sqlite3.Row, now: datetime):
+    """
+    Bouwt PDF + (MSG of Post), update DB, return dict met info.
+    """
+    offer_no = r["offer_no"]
+    klant_type = (r["klant_type"] or "particulier").strip().lower()
+    email = (r["email"] or "").strip() or None
+
+    is_bestaande_klant = int(r["is_bestaande_klant"] or 0) == 1
+    revision_no = int(r["revision_no"] or 0)
+
+    tpl_def = load_template("templates/mail_definitief.html")
+    tpl_pro = load_template("templates/mail_prospect.html")
+
+    tpl_bestaand_part = _load_template_safe("templates/mail_bestaand_particulier.html")
+    tpl_bestaand_zak = _load_template_safe("templates/mail_bestaand_zakelijk.html")
+    tpl_aangepast = _load_template_safe("templates/mail_aangepast.html")
+
+    kenteken_db = (r["kenteken"] or "").strip()
+    np_row = None
+    if not kenteken_db and r["no_plate_vehicle_id"] is not None:
+        try:
+            np_row = conn.execute(
+                "SELECT * FROM no_plate_vehicles WHERE id = ?",
+                (int(r["no_plate_vehicle_id"]),),
+            ).fetchone()
+        except Exception:
+            np_row = None
+
+    # ==========================
+    # ✅ NO-PLATE PAD
+    # ==========================
+    if np_row:
+        np_merk = (np_row["merk"] or "").strip()
+        np_model = (np_row["model"] or "").strip()
+        np_type_model = (np_row["type_model"] or "").strip()
+
+        voertuig_type = (np_row["voertuig_type"] or "personenauto").strip().lower()
+        if voertuig_type not in ("personenauto", "bestelauto"):
+            voertuig_type = "personenauto"
+
+        bouwjaar_np = np_row["bouwjaar"]
+        bouwjaar_final = str(bouwjaar_np) if bouwjaar_np is not None else (str(r["bouwjaar"] or "").strip())
+
+        brandstof_final = (np_row["brandstof"] or "").strip()
+        gewicht_final = (r["np_gewicht"] or np_row["gewicht"] or "").strip()
+
+        # ✅ juiste cataloguswaarde per klanttype (met fallback + offer overrides)
+        catalogus_final = _pick_np_catalogus(np_row, klant_type, r)
+
+        auto_str = " ".join([x for x in [np_merk, np_model] if x]).strip()
+
+        bj_int = None
+        try:
+            bj_int = int(bouwjaar_final) if str(bouwjaar_final).strip() else None
+        except Exception:
+            bj_int = None
+        dekking = bepaal_dekking(bj_int)
+
+        meldcode_final = "-"  # geen kenteken
+
+        np_maandpremie = r["np_maandpremie"] if "np_maandpremie" in r.keys() else None
+        maandpremie = r["maandpremie"] if "maandpremie" in r.keys() else None
+
+        premie_final = None
+        if np_maandpremie is not None:
+            premie_final = np_maandpremie
+        elif maandpremie is not None:
+            premie_final = maandpremie
+        else:
+            premie_final = _pick_np_premie(np_row, klant_type, int(r["regio"] or 0))
+
+        svj_override = r["svj_override"] if "svj_override" in r.keys() else None
+        dekking_override = r["dekking_override"] if "dekking_override" in r.keys() else None
+        extra_svi = r["extra_svi"] if "extra_svi" in r.keys() else 0
+        extra_rb = r["extra_rb"] if "extra_rb" in r.keys() else 0
+        dekking_final = _compose_dekking(dekking, dekking_override, extra_svi, extra_rb)
+
+        offer_pdf_path = generate_offer_pdf(
+            out_base_dir="data/offers",
+            dt=now,
+            offer_no=offer_no,
+            klant={
+                "naam": r["klantnaam"] or "",
+                "adres": r["adres"] or "",
+                "postcode": r["postcode"] or "",
+                "plaats": r["plaats"] or "",
+                "telefoon": r["telefoon"] or "",
+                "email": email or "",
+                "klant_type": klant_type,
+            },
+            voertuig={
+                "auto": auto_str,
+                "kenteken": "",  # ✅ leeg
+                "brandstof": brandstof_final,  # ✅ uit no-plate db
+                "voertuig_type": voertuig_type,
+                "merk": np_merk,
+                "model": np_model,
+            },
+            offer={
+                "regio": r["regio"] if r["regio"] is not None else "",
+                "dekking": dekking_final,
+                "dekking_override": dekking_override or "",
+                "extra_svi": extra_svi,
+                "extra_rb": extra_rb,
+                "gewicht": gewicht_final,
+                "bouwjaar": bouwjaar_final,
+                "cataloguswaarde": catalogus_final,
+                "dagwaarde": "",
+                "bpm": "",  # meestal onbekend
+                "meldcode": meldcode_final,
+                "premie_maand": premie_final,
+                "svj_override": svj_override,
+                # ✅ belangrijk: no-plate cataloguswaarde is al in juiste context
+                "waarde_al_in_context": "1",
+            },
+            filename_base=_offer_pdf_filename_base(r["klantnaam"] or "", klant_type, offer_no),
+        )
+
+    # ==========================
+    # ✅ NORMAAL PAD (kenteken)
+    # ==========================
+    else:
+        # ✅ FIX: altijd lookup zonder streepjes, maar weergave mét streepjes
+        kenteken_lookup = _kenteken_lookup_value(kenteken_db)
+        kenteken_display = _format_nl_kenteken(kenteken_db)
+
+        db_path = PROJECT_ROOT / "data" / "app.db"
+        vinfo = get_vehicle_info(
+            kenteken=kenteken_lookup,
+            merk=r["merk"] or "",
+            model=r["model"] or "",
+            db_path=db_path,
+        )
+
+        db_voertuig_type = str(r["voertuig_type"] or "").strip()
+        vinfo_voertuig_type = getattr(vinfo, "voertuig_type", "") or ""
+        voertuig_type = (vinfo_voertuig_type or db_voertuig_type or "personenauto").strip().lower()
+
+        bj_int = None
+        try:
+            bj_int = int(vinfo.bouwjaar) if (vinfo.bouwjaar or "").strip() else None
+        except Exception:
+            bj_int = None
+        dekking = bepaal_dekking(bj_int)
+
+        auto_str = " ".join([x for x in [vinfo.merk, vinfo.model] if x]).strip()
+
+        meldcode_rolls = ""
+        voertuig_type_rolls = ""
+        if kenteken_lookup:
+            try:
+                meldcode_rolls, voertuig_type_rolls = get_meldcode_en_type(kenteken_lookup)
+            except Exception:
+                meldcode_rolls, voertuig_type_rolls = "", ""
+
+        if voertuig_type_rolls and (not vinfo_voertuig_type) and (not db_voertuig_type):
+            voertuig_type = voertuig_type_rolls.strip().lower()
+
+        vinfo_meldcode = getattr(vinfo, "meldcode", "") or ""
+        meldcode_final = (meldcode_rolls or vinfo_meldcode or "—").strip()
+
+        maandpremie = r["maandpremie"] if "maandpremie" in r.keys() else None
+        svj_override = r["svj_override"] if "svj_override" in r.keys() else None
+        dekking_override = r["dekking_override"] if "dekking_override" in r.keys() else None
+        extra_svi = r["extra_svi"] if "extra_svi" in r.keys() else 0
+        extra_rb = r["extra_rb"] if "extra_rb" in r.keys() else 0
+        dekking_final = _compose_dekking(dekking, dekking_override, extra_svi, extra_rb)
+
+        offer_pdf_path = generate_offer_pdf(
+            out_base_dir="data/offers",
+            dt=now,
+            offer_no=offer_no,
+            klant={
+                "naam": r["klantnaam"] or "",
+                "adres": r["adres"] or "",
+                "postcode": r["postcode"] or "",
+                "plaats": r["plaats"] or "",
+                "telefoon": r["telefoon"] or "",
+                "email": email or "",
+                "klant_type": klant_type,
+            },
+            voertuig={
+                "auto": auto_str,
+                "kenteken": kenteken_display,  # ✅ HIER: weergave met streepjes
+                "brandstof": getattr(vinfo, "brandstof", "") or "",
+                "voertuig_type": voertuig_type,
+                "merk": getattr(vinfo, "merk", "") or (r["merk"] or ""),
+                "model": getattr(vinfo, "model", "") or (r["model"] or ""),
+            },
+            offer={
+                "regio": r["regio"] if r["regio"] is not None else "",
+                "dekking": dekking_final,
+                "dekking_override": dekking_override or "",
+                "extra_svi": extra_svi,
+                "extra_rb": extra_rb,
+                "gewicht": getattr(vinfo, "ledig_gewicht", "") or "",
+                "bouwjaar": getattr(vinfo, "bouwjaar", "") or "",
+                "cataloguswaarde": getattr(vinfo, "cataloguswaarde", "") or "",
+                "dagwaarde": getattr(vinfo, "dagwaarde", "") or "",
+                "bpm": getattr(vinfo, "bpm", "") or "",
+                "meldcode": meldcode_final,
+                "is_schatting": "1" if getattr(vinfo, "is_schatting", False) else "",
+                "schatting_toelichting": getattr(vinfo, "schatting_toelichting", "") or "",
+                "premie_maand": maandpremie,
+                "svj_override": svj_override,
+            },
+            filename_base=_offer_pdf_filename_base(r["klantnaam"] or "", klant_type, offer_no),
+        )
+
+    # -----------------------------
+    # Levering (email/post)
+    # -----------------------------
+    if email:
+        template = _choose_mail_template(
+            klant_type=klant_type,
+            is_bestaande_klant=is_bestaande_klant,
+            revision_no=revision_no,
+            tpl_def=tpl_def,
+            tpl_pro=tpl_pro,
+            tpl_bestaand_part=tpl_bestaand_part,
+            tpl_bestaand_zak=tpl_bestaand_zak,
+            tpl_aangepast=tpl_aangepast,
+        )
+
+        if klant_type == "zakelijk":
+            aanhef = "heer/mevrouw"
+            achternaam = ""
+            aanhefregel = "Geachte heer/mevrouw,"
+        else:
+            aanhef, achternaam = guess_aanhef_en_achternaam(r["klantnaam"] or "")
+            aanhefregel = f"Geachte {aanhef} {achternaam}," if achternaam else f"Geachte {aanhef},"
+
+        auto_show = " ".join([x for x in [(r["merk"] or "").strip(), (r["model"] or "").strip()] if x]).strip() or "auto"
+
+        body = render_mail_template(
+            template,
+            {
+                "aanhefregel": aanhefregel,
+                "aanhef": aanhef,
+                "achternaam": achternaam,
+                "auto": auto_show,
+                "offerte_nummer": offer_no,
+                "aanvraag_link": AANVRAAG_LINK,
+                "revision_no": revision_no,
+                "revision_of": r["revision_of"] or "",
+            },
+        )
+
+        subject = _subject_for_offer(klant_type, revision_no, offer_no)
+
+        msg_path = write_msg_outlook(
+            out_base_dir="data/outbox",
+            dt=now,
+            offer_no=offer_no,
+            to_addr=email,
+            subject=subject,
+            body_text=body,
+            pdf_path=offer_pdf_path,
+        )
+
+        _execute_retry(
+            conn,
+            """
+            UPDATE offers
+            SET offer_pdf_path = ?, eml_path = ?, post_letter_path = NULL,
+                delivery_method = 'email', delivery_status = 'email_klaar'
+            WHERE offer_no = ?
+            """,
+            (offer_pdf_path, msg_path, offer_no),
+        )
+        return {"kind": "email", "pdf": offer_pdf_path, "msg": msg_path}
+
+    auto_show = " ".join([x for x in [(r["merk"] or "").strip(), (r["model"] or "").strip()] if x]).strip() or "auto"
+
+    post_letter_path = generate_post_letter_pdf(
+        out_base_dir="data/post",
+        dt=now,
+        offer_no=offer_no,
+        klantnaam=r["klantnaam"] or "",
+        adres=r["adres"] or "",
+        postcode=r["postcode"] or "",
+        plaats=r["plaats"] or "",
+        auto=auto_show,
+        behandeld_door="Dirk Slootweg",
+    )
+
+    _execute_retry(
+        conn,
+        """
+        UPDATE offers
+        SET offer_pdf_path = ?, post_letter_path = ?, eml_path = NULL,
+            delivery_method = 'post', delivery_status = 'post_klaar'
+        WHERE offer_no = ?
+        """,
+        (offer_pdf_path, post_letter_path, offer_no),
+    )
+    return {"kind": "post", "pdf": offer_pdf_path, "post": post_letter_path}
+
+
+# -----------------------------
+# Export routes
+# -----------------------------
+@app.post("/export-last-batch")
+def export_last_batch():
+    ensure_db()
+    now = datetime.now()
+    batch_id = get_last_batch_id()
+
+    if not batch_id:
+        flash("Geen batch gevonden om te exporteren.", "error")
+        return redirect(url_for("dashboard"))
+
+    processed = 0
+    mails = 0
+    posts = 0
+
+    msg_rows = []
+    post_rows = []
+
+    with connect() as conn:
+        rows = conn.execute(
+            """
+            SELECT * FROM offers
+            WHERE is_blocked = 0
+              AND batch_id = ?
+            ORDER BY
+                CASE
+                    WHEN COALESCE(offer_pdf_path,'')='' AND COALESCE(eml_path,'')='' AND COALESCE(post_letter_path,'')=''
+                    THEN 0 ELSE 1
+                END ASC,
+                CASE WHEN lower(klant_type)='zakelijk' THEN 1 ELSE 0 END ASC,
+                CAST(COALESCE(regio, 999) AS INTEGER) ASC,
+                created_at DESC,
+                offer_no DESC
+            """,
+            (batch_id,),
+        ).fetchall()
+
+        for r in rows:
+            info = _build_pdf_and_delivery(conn, r, now)
+            processed += 1
+            if info["kind"] == "email":
+                mails += 1
+                msg_rows.append(
+                    {
+                        "offer_no": r["offer_no"],
+                        "klantnaam": r["klantnaam"] or "",
+                        "email": (r["email"] or "").strip(),
+                        "msg_path": info["msg"],
+                        "pdf_path": info["pdf"],
+                    }
+                )
+            else:
+                posts += 1
+                post_rows.append(
+                    {
+                        "offer_no": r["offer_no"],
+                        "klantnaam": r["klantnaam"] or "",
+                        "post_letter_path": info["post"],
+                    }
+                )
+
+        conn.commit()
+
+    return render_template(
+        "batch_done_msg.html",
+        batch_id=batch_id,
+        processed=processed,
+        mails=mails,
+        posts=posts,
+        msgs=msg_rows,
+        post_rows=post_rows,
+    )
+
+
+@app.post("/offer/<offer_no>/export-one")
+def export_one_offer(offer_no: str):
+    ensure_db()
+    now = datetime.now()
+    next_url = request.form.get("next") or url_for("offers")
+
+    with connect() as conn:
+        r = conn.execute("SELECT * FROM offers WHERE offer_no = ?", (offer_no,)).fetchone()
+        if not r:
+            flash("Offerte niet gevonden.", "error")
+            return redirect(next_url)
+
+        if int(r["is_blocked"] or 0) == 1:
+            flash("Deze offerte is geblokkeerd en kan niet geëxporteerd worden.", "error")
+            return redirect(next_url)
+
+        info = _build_pdf_and_delivery(conn, r, now)
+        conn.commit()
+
+    flash(f"Offerte geëxporteerd ({info['kind']}): {offer_no}", "ok")
+    return redirect(next_url)
+
+
+# -----------------------------
+# File/browse routes
+# -----------------------------
+@app.get("/file")
+def get_file():
+    rel = request.args.get("path", "").strip()
+    if not rel:
+        flash("Geen bestand opgegeven.", "error")
+        return redirect(url_for("offers"))
+
+    abs_path = (PROJECT_ROOT / rel).resolve()
+
+    if PROJECT_ROOT not in abs_path.parents and abs_path != PROJECT_ROOT:
+        flash("Onveilig pad geweigerd.", "error")
+        return redirect(url_for("offers"))
+
+    if not abs_path.exists():
+        flash("Bestand bestaat niet.", "error")
+        return redirect(url_for("offers"))
+
+    return send_file(abs_path, as_attachment=False)
+
+
+@app.route("/browse/<kind>")
+def browse(kind: str):
+    ensure_db()
+
+    mapping = {
+        "offers": PROJECT_ROOT / "data" / "offers",
+        "outbox": PROJECT_ROOT / "data" / "outbox",
+        "post": PROJECT_ROOT / "data" / "post",
+        "inbox": PROJECT_ROOT / "data" / "inbox",
+    }
+    base = mapping.get(kind)
+    if not base:
+        flash("Onbekende map.", "error")
+        return redirect(url_for("dashboard"))
+
+    base.mkdir(parents=True, exist_ok=True)
+
+    items = []
+    for p in sorted(base.rglob("*"), key=lambda x: str(x).lower()):
+        if p.is_dir():
+            continue
+        st = p.stat()
+        items.append(
+            {
+                "name": p.name,
+                "rel": safe_relpath(p),
+                "size": st.st_size,
+                "mtime": datetime.fromtimestamp(st.st_mtime).strftime("%Y-%m-%d %H:%M"),
+            }
+        )
+
+    return render_template("browse.html", kind=kind, base=str(base), items=items)
+
+
+if __name__ == "__main__":
+    ensure_db()
+    app.run(debug=True)

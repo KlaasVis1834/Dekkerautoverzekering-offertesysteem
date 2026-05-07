@@ -1,0 +1,71 @@
+{% extends "base.html" %}
+{% block content %}
+
+<div class="card">
+  <div class="row" style="justify-content:space-between">
+    <div>
+      <h3 style="margin:0">Batch export klaar</h3>
+      <div class="muted small">Batch: <b>{{ batch_id }}</b> — verwerkt: <b>{{ processed }}</b> ({{ mails }} mail / {{ posts }} post)</div>
+      <div class="muted small">Tip: Klik op <b>Open mail</b> om Outlook/Mail te openen met de bijlage.</div>
+    </div>
+    <div class="row">
+      <a class="btn" href="{{ url_for('offers') }}">Terug naar offertes</a>
+      <a class="btn" href="{{ url_for('browse', kind='outbox') }}">Open outbox-map</a>
+      <a class="btn" href="{{ url_for('browse', kind='offers') }}">Open offers-map</a>
+    </div>
+  </div>
+
+  <div style="height:14px"></div>
+
+  {% if emls %}
+    <div class="row">
+      <button class="btn primary" onclick="openAll()">Open alle mails (1 voor 1)</button>
+      <span class="muted small">Let op: browser kan popups blokkeren. Dan per mail openen.</span>
+    </div>
+
+    <div style="height:12px"></div>
+
+    <table>
+      <tr>
+        <th>Offerte</th>
+        <th>Klant</th>
+        <th>Email</th>
+        <th>Mail openen</th>
+        <th>PDF</th>
+      </tr>
+      {% for x in emls %}
+      <tr>
+        <td><b>{{ x.offer_no }}</b></td>
+        <td>{{ x.klantnaam }}</td>
+        <td class="muted">{{ x.email }}</td>
+        <td>
+          <a class="btn ok" target="_blank" href="{{ url_for('get_file') }}?path={{ x.eml_path }}">Open mail</a>
+        </td>
+        <td>
+          <a class="btn" target="_blank" href="{{ url_for('get_file') }}?path={{ x.pdf_path }}">PDF</a>
+        </td>
+      </tr>
+      {% endfor %}
+    </table>
+  {% else %}
+    <div class="muted">Geen e-mails in deze batch (alleen post of alles geblokkeerd).</div>
+  {% endif %}
+</div>
+
+<script>
+  // opent emls 1-voor-1; browsers blokkeren vaak veel popups tegelijk
+  function openAll(){
+    const links = Array.from(document.querySelectorAll('a.btn.ok')).map(a => a.href);
+    let i = 0;
+
+    function next(){
+      if(i >= links.length) return;
+      window.open(links[i], '_blank');
+      i++;
+      setTimeout(next, 450);
+    }
+    next();
+  }
+</script>
+
+{% endblock %}

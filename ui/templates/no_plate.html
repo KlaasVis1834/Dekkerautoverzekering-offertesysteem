@@ -1,0 +1,266 @@
+{% extends "base.html" %}
+{% block content %}
+
+<div class="card">
+  <div style="display:flex; align-items:flex-start; justify-content:space-between; gap:12px; flex-wrap:wrap;">
+    <div>
+      <div style="font-weight:900; font-size:18px;">No-plate voertuigen</div>
+      <div class="muted">Voertuigen zonder kenteken (handmatig) met premies per regio en klanttype.</div>
+    </div>
+
+    <form method="get" action="{{ url_for('no_plate') }}" class="row">
+      <input name="q" placeholder="Zoek merk/model/type..." value="{{ q }}" />
+      <button class="btn primary" type="submit">Zoeken</button>
+      <a class="btn" href="{{ url_for('no_plate') }}">Reset</a>
+    </form>
+  </div>
+</div>
+
+<div class="card" style="margin-top:14px;">
+  <div style="font-weight:900; font-size:16px; margin-bottom:10px;">Toevoegen / Bewerken</div>
+
+  <form method="post" action="{{ url_for('no_plate') }}" id="npForm">
+    <input type="hidden" name="id" id="f_id" />
+
+    <div class="split">
+      <div>
+        <div class="muted small">Merk</div>
+        <input name="merk" id="f_merk" placeholder="Bijv. Volkswagen" />
+      </div>
+      <div>
+        <div class="muted small">Model</div>
+        <input name="model" id="f_model" placeholder="Bijv. Golf" />
+      </div>
+      <div>
+        <div class="muted small">Type model</div>
+        <input name="type_model" id="f_type_model" placeholder="Bijv. 1.5 TSI" />
+      </div>
+    </div>
+
+    <div class="split" style="margin-top:10px;">
+      <div>
+        <div class="muted small">Voertuigtype</div>
+        <select name="voertuig_type" id="f_voertuig_type">
+          <option value="personenauto">personenauto</option>
+          <option value="bestelauto">bestelauto</option>
+        </select>
+      </div>
+      <div>
+        <div class="muted small">Bouwjaar</div>
+        <input name="bouwjaar" id="f_bouwjaar" placeholder="Bijv. 2024" />
+      </div>
+      <div>
+        <div class="muted small">Brandstof</div>
+        <input name="brandstof" id="f_brandstof" placeholder="Bijv. Benzine / Diesel / Hybride / EV" />
+      </div>
+    </div>
+
+    <div class="split" style="margin-top:10px;">
+      <div>
+        <div class="muted small">Cataloguswaarde Particulier (incl. btw)</div>
+        <input name="cataloguswaarde_part" id="f_catalogus_part" placeholder="Bijv. € 29.950" />
+      </div>
+      <div>
+        <div class="muted small">Cataloguswaarde Zakelijk (excl. btw / incl. bpm)</div>
+        <input name="cataloguswaarde_zak" id="f_catalogus_zak" placeholder="Bijv. € 24.750" />
+      </div>
+      <div>
+        <div class="muted small">Gewicht</div>
+        <input name="gewicht" id="f_gewicht" placeholder="Bijv. 1.230" />
+      </div>
+    </div>
+
+    <input type="hidden" name="cataloguswaarde" id="f_catalogus_legacy" />
+
+    <div class="grid grid-2" style="margin-top:14px;">
+      <div class="card" style="box-shadow:none;">
+        <div style="font-weight:900; margin-bottom:10px;">Premies Particulier</div>
+        <div class="split">
+          <div>
+            <div class="muted small">Regio 1</div>
+            <input name="premie_part_r1" id="f_pp1" />
+          </div>
+          <div>
+            <div class="muted small">Regio 2</div>
+            <input name="premie_part_r2" id="f_pp2" />
+          </div>
+        </div>
+        <div class="split" style="margin-top:10px;">
+          <div>
+            <div class="muted small">Regio 3</div>
+            <input name="premie_part_r3" id="f_pp3" />
+          </div>
+          <div>
+            <div class="muted small">Regio 4</div>
+            <input name="premie_part_r4" id="f_pp4" />
+          </div>
+        </div>
+      </div>
+
+      <div class="card" style="box-shadow:none;">
+        <div style="font-weight:900; margin-bottom:10px;">Premies Zakelijk</div>
+        <div class="split">
+          <div>
+            <div class="muted small">Regio 1</div>
+            <input name="premie_zak_r1" id="f_pz1" />
+          </div>
+          <div>
+            <div class="muted small">Regio 2</div>
+            <input name="premie_zak_r2" id="f_pz2" />
+          </div>
+        </div>
+        <div class="split" style="margin-top:10px;">
+          <div>
+            <div class="muted small">Regio 3</div>
+            <input name="premie_zak_r3" id="f_pz3" />
+          </div>
+          <div>
+            <div class="muted small">Regio 4</div>
+            <input name="premie_zak_r4" id="f_pz4" />
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="row" style="margin-top:14px;">
+      <button class="btn ok" type="submit">Opslaan</button>
+      <button class="btn" type="button" onclick="clearForm()">Nieuw</button>
+      <span class="muted small">Tip: “Bewerken” uit de lijst vult dit formulier automatisch.</span>
+    </div>
+  </form>
+</div>
+
+<div class="card" style="margin-top:14px;">
+  <div style="font-weight:900; font-size:16px; margin-bottom:10px;">Overzicht</div>
+
+  <table>
+    <thead>
+      <tr>
+        <th style="width:70px;">ID</th>
+        <th>Merk/Model/Type</th>
+        <th style="width:130px;">Voertuig</th>
+        <th style="width:80px;">BJ</th>
+        <th style="width:140px;">Brandstof</th>
+        <th style="width:170px;">Catalogus Part</th>
+        <th style="width:170px;">Catalogus Zak</th>
+        <th style="width:110px;">Gewicht</th>
+        <th style="width:210px;">Premies Part</th>
+        <th style="width:210px;">Premies Zak</th>
+        <th style="width:170px;">Acties</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for r in rows %}
+      <tr>
+        <td><span class="badge">#{{ r.id }}</span></td>
+        <td style="font-weight:900;">
+          {{ (r.merk or '') ~ ' ' ~ (r.model or '') ~ ' ' ~ (r.type_model or '') }}
+        </td>
+        <td>{{ r.voertuig_type or '' }}</td>
+        <td>{{ r.bouwjaar or '' }}</td>
+        <td>{{ r.brandstof or '' }}</td>
+        <td>{{ r.cataloguswaarde_part or r.cataloguswaarde or '' }}</td>
+        <td>{{ r.cataloguswaarde_zak or r.cataloguswaarde or '' }}</td>
+        <td>{{ r.gewicht or '' }}</td>
+        <td class="small muted">
+          R1: {{ r.premie_part_r1 or '—' }}<br>
+          R2: {{ r.premie_part_r2 or '—' }}<br>
+          R3: {{ r.premie_part_r3 or '—' }}<br>
+          R4: {{ r.premie_part_r4 or '—' }}
+        </td>
+        <td class="small muted">
+          R1: {{ r.premie_zak_r1 or '—' }}<br>
+          R2: {{ r.premie_zak_r2 or '—' }}<br>
+          R3: {{ r.premie_zak_r3 or '—' }}<br>
+          R4: {{ r.premie_zak_r4 or '—' }}
+        </td>
+        <td>
+          <!-- ✅ FIXED BEWERKEN KNOP -->
+          <button class="btn" type="button"
+            data-id="{{ r.id }}"
+            data-merk="{{ r.merk or '' }}"
+            data-model="{{ r.model or '' }}"
+            data-type_model="{{ r.type_model or '' }}"
+            data-voertuig_type="{{ r.voertuig_type or 'personenauto' }}"
+            data-bouwjaar="{{ r.bouwjaar or '' }}"
+            data-brandstof="{{ r.brandstof or '' }}"
+            data-catalogus_part="{{ r.cataloguswaarde_part or r.cataloguswaarde or '' }}"
+            data-catalogus_zak="{{ r.cataloguswaarde_zak or r.cataloguswaarde or '' }}"
+            data-gewicht="{{ r.gewicht or '' }}"
+            data-pp1="{{ r.premie_part_r1 or '' }}"
+            data-pp2="{{ r.premie_part_r2 or '' }}"
+            data-pp3="{{ r.premie_part_r3 or '' }}"
+            data-pp4="{{ r.premie_part_r4 or '' }}"
+            data-pz1="{{ r.premie_zak_r1 or '' }}"
+            data-pz2="{{ r.premie_zak_r2 or '' }}"
+            data-pz3="{{ r.premie_zak_r3 or '' }}"
+            data-pz4="{{ r.premie_zak_r4 or '' }}"
+            onclick="fillEdit(this)">
+            Bewerken
+          </button>
+
+          <form method="post" action="{{ url_for('no_plate_delete', vid=r.id) }}" style="display:inline;">
+            <button class="btn danger" type="submit" onclick="return confirm('Verwijderen?')">Verwijder</button>
+          </form>
+        </td>
+      </tr>
+      {% else %}
+      <tr>
+        <td colspan="11" class="muted">Geen no-plate voertuigen gevonden.</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+
+<script>
+function clearForm(){
+  document.getElementById('f_id').value = '';
+  document.getElementById('f_merk').value = '';
+  document.getElementById('f_model').value = '';
+  document.getElementById('f_type_model').value = '';
+  document.getElementById('f_voertuig_type').value = 'personenauto';
+  document.getElementById('f_bouwjaar').value = '';
+  document.getElementById('f_brandstof').value = '';
+  document.getElementById('f_catalogus_part').value = '';
+  document.getElementById('f_catalogus_zak').value = '';
+  document.getElementById('f_catalogus_legacy').value = '';
+  document.getElementById('f_gewicht').value = '';
+  document.getElementById('f_pp1').value = '';
+  document.getElementById('f_pp2').value = '';
+  document.getElementById('f_pp3').value = '';
+  document.getElementById('f_pp4').value = '';
+  document.getElementById('f_pz1').value = '';
+  document.getElementById('f_pz2').value = '';
+  document.getElementById('f_pz3').value = '';
+  document.getElementById('f_pz4').value = '';
+}
+
+function fillEdit(btn){
+  const d = btn.dataset;
+
+  document.getElementById('f_id').value = d.id || '';
+  document.getElementById('f_merk').value = d.merk || '';
+  document.getElementById('f_model').value = d.model || '';
+  document.getElementById('f_type_model').value = d.type_model || '';
+  document.getElementById('f_voertuig_type').value = d.voertuig_type || 'personenauto';
+  document.getElementById('f_bouwjaar').value = d.bouwjaar || '';
+  document.getElementById('f_brandstof').value = d.brandstof || '';
+  document.getElementById('f_catalogus_part').value = d.catalogus_part || '';
+  document.getElementById('f_catalogus_zak').value = d.catalogus_zak || '';
+  document.getElementById('f_catalogus_legacy').value = d.catalogus_part || '';
+  document.getElementById('f_gewicht').value = d.gewicht || '';
+  document.getElementById('f_pp1').value = d.pp1 || '';
+  document.getElementById('f_pp2').value = d.pp2 || '';
+  document.getElementById('f_pp3').value = d.pp3 || '';
+  document.getElementById('f_pp4').value = d.pp4 || '';
+  document.getElementById('f_pz1').value = d.pz1 || '';
+  document.getElementById('f_pz2').value = d.pz2 || '';
+  document.getElementById('f_pz3').value = d.pz3 || '';
+  document.getElementById('f_pz4').value = d.pz4 || '';
+
+  window.scrollTo({ top: 0, behavior: 'smooth' });
+}
+</script>
+
+{% endblock %}

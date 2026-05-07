@@ -1,0 +1,174 @@
+<!doctype html>
+<html lang="nl">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Dekker offertesysteem</title>
+  <style>
+    :root{
+      --bg:#f6f8fc;
+      --card:#ffffff;
+      --text:#0f172a;
+      --muted:#64748b;
+      --line:rgba(15,23,42,.10);
+      --accent:#2563eb;
+      --ok:#16a34a;
+      --warn:#d97706;
+      --bad:#dc2626;
+      --shadow: 0 10px 24px rgba(2,6,23,.08);
+      --radius: 16px;
+      --radius2: 12px;
+    }
+    *{box-sizing:border-box}
+    body{
+      margin:0;
+      font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Arial;
+      background: radial-gradient(900px 450px at 10% 0%, rgba(37,99,235,.12), transparent 60%),
+                  radial-gradient(700px 450px at 90% 10%, rgba(22,163,74,.10), transparent 55%),
+                  var(--bg);
+      color:var(--text);
+    }
+    a{color:inherit; text-decoration:none}
+    header{
+      position:sticky; top:0; z-index:10;
+      backdrop-filter: blur(10px);
+      background: rgba(246,248,252,.85);
+      border-bottom:1px solid var(--line);
+    }
+    .topbar{
+      max-width:1200px; margin:0 auto;
+      padding:14px 22px;
+      display:flex; gap:14px; align-items:center; justify-content:space-between;
+    }
+    .brand{display:flex; gap:10px; align-items:center; font-weight:900}
+    .dot{width:10px; height:10px; border-radius:999px; background:var(--accent)}
+    nav{display:flex; gap:10px; flex-wrap:wrap}
+    .navlink{
+      padding:9px 12px;
+      border:1px solid var(--line);
+      background: rgba(255,255,255,.70);
+      border-radius: 999px;
+      color: var(--muted);
+      font-weight:700;
+      transition:.15s;
+    }
+    .navlink:hover{transform:translateY(-1px); color:var(--text); border-color:rgba(15,23,42,.18)}
+    .wrap{max-width:1200px; margin:0 auto; padding:22px}
+    .grid{display:grid; gap:14px}
+    .grid-4{grid-template-columns: repeat(4, minmax(0,1fr))}
+    .grid-2{grid-template-columns: repeat(2, minmax(0,1fr))}
+    @media (max-width: 980px){ .grid-4{grid-template-columns: repeat(2,1fr)} .grid-2{grid-template-columns:1fr} }
+    .card{
+      background: var(--card);
+      border:1px solid var(--line);
+      border-radius: var(--radius);
+      box-shadow: var(--shadow);
+      padding:16px;
+    }
+    .muted{color:var(--muted)}
+    .kpi{
+      display:flex; align-items:flex-start; justify-content:space-between; gap:10px;
+      padding:16px;
+      border-radius: var(--radius);
+      border:1px solid var(--line);
+      background: rgba(255,255,255,.85);
+      box-shadow: var(--shadow);
+    }
+    .kpi .n{font-size:28px; font-weight:900}
+    .kpi .t{color:var(--muted); font-weight:800}
+    .badge{
+      display:inline-flex; align-items:center; gap:8px;
+      padding:6px 10px; border-radius:999px; border:1px solid var(--line);
+      background: rgba(15,23,42,.02); color: var(--muted); font-weight:800;
+    }
+    .row{display:flex; gap:10px; flex-wrap:wrap; align-items:center}
+    .btn{
+      display:inline-flex; align-items:center; justify-content:center; gap:8px;
+      padding:10px 12px;
+      border-radius: 12px;
+      border:1px solid var(--line);
+      background: #fff;
+      color: var(--text);
+      font-weight:900;
+      cursor:pointer;
+      transition:.15s;
+      user-select:none;
+    }
+    .btn:hover{transform:translateY(-1px); border-color:rgba(15,23,42,.18)}
+    .btn.primary{background: rgba(37,99,235,.12); border-color: rgba(37,99,235,.25); color:#1d4ed8}
+    .btn.ok{background: rgba(22,163,74,.12); border-color: rgba(22,163,74,.25); color:#15803d}
+    .btn.danger{background: rgba(220,38,38,.12); border-color: rgba(220,38,38,.25); color:#b91c1c}
+    input, select, textarea{
+      background: #fff;
+      border:1px solid var(--line);
+      border-radius: 12px;
+      color: var(--text);
+      padding:10px 12px;
+      outline:none;
+      min-width: 200px;
+    }
+    textarea{min-height:70px; min-width: 320px}
+    table{
+      width:100%;
+      border-collapse:separate;
+      border-spacing:0;
+      overflow:hidden;
+      border:1px solid var(--line);
+      border-radius: var(--radius);
+      background: #fff;
+    }
+    th, td{
+      padding:10px 10px;
+      border-bottom:1px solid var(--line);
+      vertical-align:top;
+      font-size:14px;
+    }
+    th{color:var(--muted); text-align:left; font-weight:900; background: rgba(15,23,42,.03)}
+    tr:last-child td{border-bottom:0}
+    .pill{padding:6px 10px; border-radius:999px; font-weight:900; border:1px solid var(--line); display:inline-flex}
+    .pill.ok{background: rgba(22,163,74,.10); color:#15803d; border-color: rgba(22,163,74,.22)}
+    .pill.warn{background: rgba(217,119,6,.10); color:#b45309; border-color: rgba(217,119,6,.22)}
+    .pill.bad{background: rgba(220,38,38,.10); color:#b91c1c; border-color: rgba(220,38,38,.22)}
+    .flash{margin:12px 0; padding:12px 14px; border-radius:14px; border:1px solid var(--line); background:#fff}
+    .flash.ok{border-color: rgba(22,163,74,.25); background: rgba(22,163,74,.08)}
+    .flash.error{border-color: rgba(220,38,38,.25); background: rgba(220,38,38,.08)}
+    .small{font-size:12px}
+    .split{display:flex; gap:14px; flex-wrap:wrap}
+    .split > *{flex:1; min-width: 320px}
+  </style>
+</head>
+<body>
+
+<header>
+  <div class="topbar">
+    <div class="brand">
+      <span class="dot"></span>
+      <div>
+        <div style="font-size:14px; color:var(--muted); font-weight:900;">Assurantiekantoor Klaas Vis</div>
+        <div style="font-size:16px;">Dekker offertesysteem</div>
+      </div>
+    </div>
+
+    <nav>
+      <a class="navlink" href="{{ url_for('dashboard') }}">Dashboard</a>
+      <a class="navlink" href="{{ url_for('import_page') }}">Import</a>
+      <a class="navlink" href="{{ url_for('offers') }}">Offertes</a>
+      <a class="navlink" href="{{ url_for('no_plate') }}">Zonder kenteken</a>
+    </nav>
+  </div>
+</header>
+
+<div class="wrap">
+  {% with messages = get_flashed_messages(with_categories=true) %}
+    {% if messages %}
+      {% for category, msg in messages %}
+        <div class="flash {{ category }}">{{ msg }}</div>
+      {% endfor %}
+    {% endif %}
+  {% endwith %}
+
+  {% block content %}{% endblock %}
+</div>
+
+</body>
+</html>

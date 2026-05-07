@@ -1,0 +1,69 @@
+{% extends "base.html" %}
+{% block content %}
+  <div class="card">
+    <h3 style="margin:0 0 6px 0;">Bel-lijst (due t/m {{ today }})</h3>
+    <div class="muted small">Alle niet-gebokkeerde offertes waarvan follow-up datum is verstreken.</div>
+  </div>
+
+  <div style="height:12px;"></div>
+
+  <table class="table">
+    <thead>
+      <tr>
+        <th>Offerte</th>
+        <th>Klant</th>
+        <th>Contact</th>
+        <th>Bestanden</th>
+        <th>Update</th>
+      </tr>
+    </thead>
+    <tbody>
+    {% for r in rows %}
+      <tr>
+        <td>
+          <b>{{ r["offer_no"] }}</b>
+          <div class="small muted">due: {{ r["follow_up_due_at"] }}</div>
+          <div class="small muted">{{ r["call_status"] }} · {{ r["decision_status"] }}</div>
+        </td>
+        <td><b>{{ r["klantnaam"] }}</b></td>
+        <td>
+          <div>{{ r["telefoon"] or "-" }}</div>
+          <div class="small muted">{{ r["email"] or "" }}</div>
+        </td>
+        <td>
+          <div class="row-actions">
+            {% if r["offer_pdf_path"] %}<a class="btn" href="{{ url_for('get_file', path=r['offer_pdf_path']) }}" target="_blank">PDF</a>{% endif %}
+            {% if r["eml_path"] %}<a class="btn" href="{{ url_for('get_file', path=r['eml_path']) }}" target="_blank">EML</a>{% endif %}
+            {% if r["post_letter_path"] %}<a class="btn" href="{{ url_for('get_file', path=r['post_letter_path']) }}" target="_blank">Postbrief</a>{% endif %}
+          </div>
+        </td>
+        <td>
+          <form method="post" action="{{ url_for('set_status', offer_no=r['offer_no']) }}">
+            <input type="hidden" name="next" value="{{ request.full_path }}">
+            <div class="row-actions">
+              <select name="call_status">
+                <option value="">call_status…</option>
+                <option value="te_bellen">te_bellen</option>
+                <option value="nagebeld">nagebeld</option>
+                <option value="niet_bellen">niet_bellen</option>
+                <option value="open">open</option>
+              </select>
+
+              <select name="decision_status">
+                <option value="">decision…</option>
+                <option value="akkoord">akkoord</option>
+                <option value="niet_akkoord">niet_akkoord</option>
+                <option value="onbekend">onbekend</option>
+              </select>
+
+              <input type="text" name="notes" value="{{ r['call_notes'] or '' }}" placeholder="Notitie (optioneel)">
+
+              <button class="btn" type="submit">Opslaan</button>
+            </div>
+          </form>
+        </td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+{% endblock %}

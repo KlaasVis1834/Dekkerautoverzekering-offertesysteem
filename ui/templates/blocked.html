@@ -1,0 +1,45 @@
+{% extends "base.html" %}
+{% block content %}
+  <div class="card">
+    <h3 style="margin:0 0 10px 0;">Geblokkeerd (denylist)</h3>
+    <div class="muted">Deze klanten worden niet benaderd.</div>
+  </div>
+
+  <div style="height:12px;"></div>
+
+  <div class="card">
+    <table class="table">
+      <thead>
+        <tr>
+          <th>Offerte</th>
+          <th>Datum</th>
+          <th>Klant</th>
+          <th>Postcode</th>
+          <th>Plaats</th>
+          <th>Kenteken</th>
+          <th>Email</th>
+          <th>Reden</th>
+          <th>Notitie</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for r in rows %}
+        <tr>
+          <td><b>{{ r.offer_no }}</b></td>
+          <td>{{ r.created_at }}</td>
+          <td>{{ r.klantnaam }}</td>
+          <td>{{ r.postcode }}</td>
+          <td>{{ r.plaats }}</td>
+          <td>{{ r.kenteken }}</td>
+          <td>{{ r.email }}</td>
+          <td>{{ r.block_reason }}</td>
+          <td>{{ r.block_note }}</td>
+        </tr>
+        {% endfor %}
+        {% if not rows %}
+        <tr><td colspan="9" class="muted">Geen geblokkeerde records.</td></tr>
+        {% endif %}
+      </tbody>
+    </table>
+  </div>
+{% endblock %}

@@ -1,0 +1,61 @@
+{% extends "base.html" %}
+{% block content %}
+
+<h1 style="margin:0 0 12px 0;">Import</h1>
+
+<div class="card">
+  <h2 style="margin:0 0 10px 0;">Nieuwe batch importeren</h2>
+  <p style="margin:0 0 12px 0; color:#555;">
+    Upload het Excelbestand van Dekkerautogroep. De denylist is standaard permanent (data/denylist.docx) en hoeft niet
+    elke keer mee. Als je hem wilt bijwerken, kun je hieronder optioneel een nieuwe denylist uploaden.
+  </p>
+
+  <form method="post" action="{{ url_for('import_page') }}" enctype="multipart/form-data">
+    <div style="display:grid; gap:12px; grid-template-columns: 1fr; max-width:720px;">
+      <div>
+        <label style="font-weight:700; display:block; margin-bottom:6px;">Excelbestand (verplicht)</label>
+        <input type="file" name="excel" accept=".xlsx" required />
+        {% if excel_candidates and excel_candidates|length > 0 %}
+          <div style="margin-top:8px; color:#666; font-size:13px;">
+            Recent in inbox:
+            <ul style="margin:6px 0 0 18px;">
+              {% for p in excel_candidates %}
+                <li>{{ p }}</li>
+              {% endfor %}
+            </ul>
+          </div>
+        {% endif %}
+      </div>
+
+      <div>
+        <label style="font-weight:700; display:block; margin-bottom:6px;">
+          Denylist (optioneel – alleen bijwerken)
+        </label>
+        <input type="file" name="denylist" accept=".docx" />
+        <div style="margin-top:6px; color:#666; font-size:13px;">
+          Status denylist:
+          {% if denylist_present %}
+            <strong>Aanwezig</strong> ({{ denylist_path }})
+          {% else %}
+            <strong>Niet aanwezig</strong> (je kunt hem hier uploaden)
+          {% endif %}
+        </div>
+      </div>
+
+      <div style="display:flex; gap:10px; align-items:center; margin-top:6px;">
+        <button class="btn" type="submit">Importeer batch</button>
+        <a class="btn btn-secondary" href="{{ url_for('dashboard') }}">Terug naar dashboard</a>
+      </div>
+    </div>
+  </form>
+</div>
+
+<div class="card" style="margin-top:14px;">
+  <h2 style="margin:0 0 10px 0;">Handig</h2>
+  <div style="display:flex; gap:10px; flex-wrap:wrap;">
+    <a class="btn btn-secondary" href="{{ url_for('browse', kind='inbox') }}">Bekijk inbox-map</a>
+    <a class="btn btn-secondary" href="{{ url_for('offers') }}">Naar offertes</a>
+  </div>
+</div>
+
+{% endblock %}

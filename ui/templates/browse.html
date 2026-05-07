@@ -1,0 +1,75 @@
+{% extends "base.html" %}
+{% block content %}
+
+<div class="card">
+  <div class="row" style="justify-content:space-between">
+    <div>
+      <h3 style="margin:0">Mappen</h3>
+      <div class="muted small">Browse: <b>{{ kind|upper }}</b> — {{ crumb if crumb else "/" }}</div>
+    </div>
+    <div class="row">
+      <a class="btn" href="{{ url_for('browse', kind='offers') }}">Offers</a>
+      <a class="btn" href="{{ url_for('browse', kind='outbox') }}">Outbox</a>
+      <a class="btn" href="{{ url_for('browse', kind='post') }}">Post</a>
+      <a class="btn" href="{{ url_for('browse', kind='inbox') }}">Inbox</a>
+    </div>
+  </div>
+
+  <div style="height:12px"></div>
+
+  <div class="row">
+    {% if parent_rel is not none %}
+      <a class="btn" href="{{ url_for('browse', kind=kind) }}?path={{ parent_rel }}">⬅️ Omhoog</a>
+    {% else %}
+      <a class="btn" href="{{ url_for('browse', kind=kind) }}">Root</a>
+    {% endif %}
+  </div>
+
+  <div style="height:12px"></div>
+
+  <div class="split">
+    <div>
+      <div class="badge">Mappen</div>
+      <div style="height:10px"></div>
+      {% if folders %}
+        <table>
+          <tr><th>Map</th><th>Items</th><th></th></tr>
+          {% for d in folders %}
+          <tr>
+            <td><b>{{ d.name }}</b></td>
+            <td class="muted">{{ d.count }}</td>
+            <td style="text-align:right">
+              <a class="btn ok" href="{{ url_for('browse', kind=kind) }}?path={{ d.rel }}">Open</a>
+            </td>
+          </tr>
+          {% endfor %}
+        </table>
+      {% else %}
+        <div class="muted">Geen submappen.</div>
+      {% endif %}
+    </div>
+
+    <div>
+      <div class="badge">Bestanden</div>
+      <div style="height:10px"></div>
+      {% if files %}
+        <table>
+          <tr><th>Bestand</th><th>KB</th><th></th></tr>
+          {% for f in files %}
+          <tr>
+            <td><b>{{ f.name }}</b></td>
+            <td class="muted">{{ f.size_kb }}</td>
+            <td style="text-align:right">
+              <a class="btn primary" href="{{ url_for('get_file') }}?path={{ f.rel }}" target="_blank">Open</a>
+            </td>
+          </tr>
+          {% endfor %}
+        </table>
+      {% else %}
+        <div class="muted">Geen bestanden.</div>
+      {% endif %}
+    </div>
+  </div>
+</div>
+
+{% endblock %}

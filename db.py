@@ -18,7 +18,7 @@ def connect():
         DATABASE_URL,
         row_factory=dict_row,
         connect_timeout=15,
-        prepare_threshold=None
+        prepare_threshold=None,
     )
 
 

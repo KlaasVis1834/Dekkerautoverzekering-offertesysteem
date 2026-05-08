@@ -13,11 +13,8 @@ if str(PROJECT_ROOT) not in sys.path:
 from datetime import datetime
 
 import psycopg
-
 from psycopg.rows import dict_row
-
 from psycopg import OperationalError
-
 from psycopg_pool import ConnectionPool
 from flask import (
     Flask,
@@ -55,6 +52,7 @@ DATABASE_URL = os.environ.get("DATABASE_URL", "").strip()
 LOCAL_SQLITE_DB_PATH = PROJECT_ROOT / "data" / "app.db"
 
 DB_READY = False
+DB_POOL = None
 
 
 # -----------------------------

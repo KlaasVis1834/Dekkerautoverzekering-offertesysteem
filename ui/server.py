@@ -51,6 +51,8 @@ app.secret_key = os.environ.get("SECRET_KEY", "dekker-offertesysteem-local")
 DATABASE_URL = os.environ.get("DATABASE_URL", "").strip()
 LOCAL_SQLITE_DB_PATH = PROJECT_ROOT / "data" / "app.db"
 
+DB_READY = False
+
 
 # -----------------------------
 # Login helpers
@@ -168,6 +170,11 @@ def seed_default_users(conn):
 
 
 def ensure_db():
+    global DB_READY
+
+    if DB_READY:
+        return
+
     with connect() as conn:
         conn.execute(
             """
@@ -296,6 +303,8 @@ def ensure_db():
 
         seed_default_users(conn)
         conn.commit()
+
+    DB_READY = True
 
 
 # -----------------------------
@@ -671,7 +680,14 @@ def _normalize_dekking_override(v: str) -> str:
         return "WA"
     if s in ("wa beperkt casco", "wa / beperkt casco", "beperkt casco"):
         return "WA / Beperkt Casco"
-    if s in ("allrisk", "wa casco compleet", "wa / casco compleet", "wa / casco compleet (allrisk)", "casco compleet", "casco compleet (allrisk)"):
+    if s in (
+        "allrisk",
+        "wa casco compleet",
+        "wa / casco compleet",
+        "wa / casco compleet (allrisk)",
+        "casco compleet",
+        "casco compleet (allrisk)",
+    ):
         return "WA / Casco Compleet (Allrisk)"
     return (v or "").strip()
 
@@ -695,7 +711,9 @@ def _compose_dekking(auto_dekking: str, dekking_override: str, extra_svi, extra_
             seen.add(rb.lower())
 
     return " / ".join(parts)
-    # -----------------------------
+
+
+# -----------------------------
 # Routes
 # -----------------------------
 @app.route("/")

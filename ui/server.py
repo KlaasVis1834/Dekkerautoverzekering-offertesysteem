@@ -902,7 +902,7 @@ def offers():
         COALESCE(regio, 999) ASC,
         created_at DESC,
         offer_no DESC
-    LIMIT 500
+    LIMIT 100
     """
 
     with connect() as conn:

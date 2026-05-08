@@ -177,7 +177,6 @@
 
         <div class="row">
           <input name="maandpremie" placeholder="Maandpremie" value="{{ r['maandpremie'] if r['maandpremie'] is not none else '' }}" style="min-width:160px;" />
-          <input name="np_maandpremie" placeholder="NP premie override" value="{{ r['np_maandpremie'] if r['np_maandpremie'] is not none else '' }}" style="min-width:160px;" />
         </div>
 
         <div class="row">
@@ -354,7 +353,6 @@
           <input type="hidden" name="next" value="{{ request.full_path }}">
 
           <input name="maandpremie" placeholder="Maandpremie" value="{{ r['maandpremie'] if r['maandpremie'] is not none else '' }}" />
-          <input name="np_maandpremie" placeholder="NP premie override" value="{{ r['np_maandpremie'] if r['np_maandpremie'] is not none else '' }}" />
           <input name="svj_override" placeholder="SVJ override" value="{{ r['svj_override'] if r['svj_override'] is not none else '' }}" />
 
           <label class="row muted small" style="gap:8px;">

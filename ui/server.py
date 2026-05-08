@@ -11,7 +11,10 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 from datetime import datetime
-import sqlite3
+
+import psycopg
+from psycopg.rows import dict_row
+from psycopg import OperationalError
 
 from flask import (
     Flask,
@@ -45,7 +48,8 @@ AANVRAAG_LINK = "https://www.klaasvis.online/aanvraagformulier/"
 app = Flask(__name__)
 app.secret_key = os.environ.get("SECRET_KEY", "dekker-offertesysteem-local")
 
-DB_PATH = PROJECT_ROOT / "data" / "app.db"
+DATABASE_URL = os.environ.get("DATABASE_URL", "").strip()
+LOCAL_SQLITE_DB_PATH = PROJECT_ROOT / "data" / "app.db"
 
 
 # -----------------------------
@@ -78,12 +82,68 @@ def admin_required(f):
     return wrapper
 
 
+def login_required(f):
+    @wraps(f)
+    def wrapper(*args, **kwargs):
+        if not session.get("logged_in"):
+            return redirect(url_for("login"))
+        return f(*args, **kwargs)
+
+    return wrapper
+
+
+# -----------------------------
+# DB helpers PostgreSQL / Supabase
+# -----------------------------
+def connect():
+    if not DATABASE_URL:
+        raise RuntimeError("DATABASE_URL ontbreekt. Zet deze in Render Environment Variables.")
+
+    return psycopg.connect(
+        DATABASE_URL,
+        row_factory=dict_row,
+        connect_timeout=15,
+    )
+
+
+def _table_columns(conn, table_name: str) -> set[str]:
+    rows = conn.execute(
+        """
+        SELECT column_name
+        FROM information_schema.columns
+        WHERE table_schema = 'public'
+          AND table_name = %s
+        """,
+        (table_name,),
+    ).fetchall()
+    return {r["column_name"] for r in rows}
+
+
+def _ensure_column(conn, table: str, col: str, ddl_type: str):
+    cols = _table_columns(conn, table)
+    if col in cols:
+        return
+    conn.execute(f"ALTER TABLE {table} ADD COLUMN {col} {ddl_type}")
+
+
+def _execute_retry(conn, sql: str, params=(), retries: int = 8, sleep_s: float = 0.25):
+    last_err = None
+    for _ in range(retries):
+        try:
+            return conn.execute(sql, params)
+        except OperationalError as e:
+            last_err = e
+            time.sleep(sleep_s)
+            continue
+    raise last_err
+
+
 def seed_default_users(conn):
     now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
     for username, display_name, role in DEFAULT_USERS:
         existing = conn.execute(
-            "SELECT id FROM users WHERE username = ?",
+            "SELECT id FROM users WHERE username = %s",
             (username,),
         ).fetchone()
 
@@ -93,8 +153,8 @@ def seed_default_users(conn):
         temp_password = f"{display_name}2026!"
         conn.execute(
             """
-            INSERT INTO users (username, display_name, password_hash, role, created_at)
-            VALUES (?, ?, ?, ?, ?)
+            INSERT INTO users (username, display_name, password_hash, role, created_at, active)
+            VALUES (%s, %s, %s, %s, %s, 1)
             """,
             (
                 username,
@@ -106,222 +166,7 @@ def seed_default_users(conn):
         )
 
 
-def login_required(f):
-    @wraps(f)
-    def wrapper(*args, **kwargs):
-        if not session.get("logged_in"):
-            return redirect(url_for("login"))
-        return f(*args, **kwargs)
-
-    return wrapper
-
-
-@app.route("/login", methods=["GET", "POST"])
-def login():
-    ensure_db()
-
-    if session.get("logged_in"):
-        return redirect(url_for("dashboard"))
-
-    if request.method == "POST":
-        username = (request.form.get("username") or "").strip().lower()
-        password = request.form.get("password") or ""
-
-        with connect() as conn:
-            user = conn.execute(
-                """
-                SELECT id, username, display_name, password_hash, role, active
-                FROM users
-                WHERE username = ?
-                """,
-                (username,),
-            ).fetchone()
-
-        if user and int(user["active"] or 1) != 1:
-            flash("Dit account is uitgeschakeld.", "error")
-            return render_template("login.html")
-
-        if user and check_password_hash(user["password_hash"], password):
-            session["logged_in"] = True
-            session["user_id"] = user["id"]
-            session["username"] = user["username"]
-            session["display_name"] = user["display_name"]
-            session["role"] = user["role"]
-
-            with connect() as conn:
-                conn.execute(
-                    "UPDATE users SET last_login_at = ? WHERE id = ?",
-                    (datetime.now().strftime("%Y-%m-%d %H:%M:%S"), user["id"]),
-                )
-                conn.commit()
-
-            return redirect(url_for("dashboard"))
-
-        flash("Ongeldige gebruikersnaam of wachtwoord.", "error")
-
-    return render_template("login.html")
-
-
-@app.route("/logout")
-def logout():
-    session.clear()
-    return redirect(url_for("login"))
-
-
-@app.route("/account", methods=["GET", "POST"])
-@login_required
-def account():
-    ensure_db()
-
-    if request.method == "POST":
-        current_password = request.form.get("current_password") or ""
-        new_password = request.form.get("new_password") or ""
-        confirm_password = request.form.get("confirm_password") or ""
-
-        if len(new_password) < 8:
-            flash("Nieuw wachtwoord moet minimaal 8 tekens bevatten.", "error")
-            return redirect(url_for("account"))
-
-        if new_password != confirm_password:
-            flash("De nieuwe wachtwoorden komen niet overeen.", "error")
-            return redirect(url_for("account"))
-
-        username = session.get("username")
-
-        with connect() as conn:
-            user = conn.execute(
-                "SELECT id, password_hash FROM users WHERE username = ?",
-                (username,),
-            ).fetchone()
-
-            if not user or not check_password_hash(user["password_hash"], current_password):
-                flash("Huidig wachtwoord klopt niet.", "error")
-                return redirect(url_for("account"))
-
-            conn.execute(
-                "UPDATE users SET password_hash = ? WHERE id = ?",
-                (generate_password_hash(new_password), user["id"]),
-            )
-            conn.commit()
-
-        flash("Wachtwoord succesvol gewijzigd.", "ok")
-        return redirect(url_for("account"))
-
-    return render_template("account.html")
-
-
-@app.route("/admin/users")
-@admin_required
-def admin_users():
-    ensure_db()
-
-    with connect() as conn:
-        users = conn.execute(
-            """
-            SELECT id, username, display_name, role, active, created_at, last_login_at
-            FROM users
-            ORDER BY 
-                CASE WHEN role = 'admin' THEN 0 ELSE 1 END,
-                display_name ASC
-            """
-        ).fetchall()
-
-    return render_template("admin_users.html", users=users)
-
-
-@app.post("/admin/users/<int:user_id>/reset-password")
-@admin_required
-def admin_reset_password(user_id: int):
-    ensure_db()
-
-    with connect() as conn:
-        user = conn.execute(
-            "SELECT id, username, display_name FROM users WHERE id = ?",
-            (user_id,),
-        ).fetchone()
-
-        if not user:
-            flash("Gebruiker niet gevonden.", "error")
-            return redirect(url_for("admin_users"))
-
-        new_password = f"{user['display_name']}2026!"
-
-        conn.execute(
-            "UPDATE users SET password_hash = ? WHERE id = ?",
-            (generate_password_hash(new_password), user_id),
-        )
-        conn.commit()
-
-    flash(f"Wachtwoord gereset voor {user['display_name']}. Tijdelijk wachtwoord: {new_password}", "ok")
-    return redirect(url_for("admin_users"))
-
-
-@app.post("/admin/users/<int:user_id>/toggle-active")
-@admin_required
-def admin_toggle_user_active(user_id: int):
-    ensure_db()
-
-    if user_id == session.get("user_id"):
-        flash("Je kunt je eigen account niet uitschakelen.", "error")
-        return redirect(url_for("admin_users"))
-
-    with connect() as conn:
-        user = conn.execute(
-            "SELECT id, display_name, active FROM users WHERE id = ?",
-            (user_id,),
-        ).fetchone()
-
-        if not user:
-            flash("Gebruiker niet gevonden.", "error")
-            return redirect(url_for("admin_users"))
-
-        new_active = 0 if int(user["active"] or 1) == 1 else 1
-
-        conn.execute(
-            "UPDATE users SET active = ? WHERE id = ?",
-            (new_active, user_id),
-        )
-        conn.commit()
-
-    status = "ingeschakeld" if new_active == 1 else "uitgeschakeld"
-    flash(f"{user['display_name']} is {status}.", "ok")
-    return redirect(url_for("admin_users"))
-
-
-# -----------------------------
-# DB helpers
-# -----------------------------
-def connect():
-    conn = sqlite3.connect(DB_PATH, timeout=30)
-    conn.row_factory = sqlite3.Row
-    try:
-        conn.execute("PRAGMA busy_timeout = 30000")
-        conn.execute("PRAGMA journal_mode=WAL")
-    except Exception:
-        pass
-    return conn
-
-
-def _table_columns(conn, table_name: str) -> set[str]:
-    cols = set()
-    try:
-        rows = conn.execute(f"PRAGMA table_info({table_name})").fetchall()
-        for r in rows:
-            cols.add(str(r["name"]))
-    except Exception:
-        pass
-    return cols
-
-
-def _ensure_column(conn, table: str, col: str, ddl_type: str):
-    cols = _table_columns(conn, table)
-    if col in cols:
-        return
-    conn.execute(f"ALTER TABLE {table} ADD COLUMN {col} {ddl_type}")
-
-
 def ensure_db():
-    DB_PATH.parent.mkdir(parents=True, exist_ok=True)
     with connect() as conn:
         conn.execute(
             """
@@ -373,8 +218,8 @@ def ensure_db():
             """
         )
 
-        _ensure_column(conn, "offers", "maandpremie", "REAL")
-        _ensure_column(conn, "offers", "dienstverlening_bedrag", "REAL")
+        _ensure_column(conn, "offers", "maandpremie", "DOUBLE PRECISION")
+        _ensure_column(conn, "offers", "dienstverlening_bedrag", "DOUBLE PRECISION")
         _ensure_column(conn, "offers", "svj_override", "INTEGER")
         _ensure_column(conn, "offers", "is_bestaande_klant", "INTEGER DEFAULT 0")
         _ensure_column(conn, "offers", "revision_of", "TEXT")
@@ -385,11 +230,12 @@ def ensure_db():
         _ensure_column(conn, "offers", "created_by", "TEXT")
         _ensure_column(conn, "offers", "updated_by", "TEXT")
         _ensure_column(conn, "offers", "updated_at", "TEXT")
+        _ensure_column(conn, "offers", "mail_template_type", "TEXT DEFAULT 'auto'")
 
         conn.execute(
             """
             CREATE TABLE IF NOT EXISTS no_plate_vehicles (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                id SERIAL PRIMARY KEY,
 
                 merk TEXT,
                 model TEXT,
@@ -403,17 +249,17 @@ def ensure_db():
                 gewicht TEXT,
 
                 cataloguswaarde_part TEXT,
-                cataloguswaarde_zak  TEXT,
+                cataloguswaarde_zak TEXT,
 
-                premie_part_r1 REAL,
-                premie_part_r2 REAL,
-                premie_part_r3 REAL,
-                premie_part_r4 REAL,
+                premie_part_r1 DOUBLE PRECISION,
+                premie_part_r2 DOUBLE PRECISION,
+                premie_part_r3 DOUBLE PRECISION,
+                premie_part_r4 DOUBLE PRECISION,
 
-                premie_zak_r1 REAL,
-                premie_zak_r2 REAL,
-                premie_zak_r3 REAL,
-                premie_zak_r4 REAL,
+                premie_zak_r1 DOUBLE PRECISION,
+                premie_zak_r2 DOUBLE PRECISION,
+                premie_zak_r3 DOUBLE PRECISION,
+                premie_zak_r4 DOUBLE PRECISION,
 
                 created_at TEXT
             )
@@ -426,7 +272,7 @@ def ensure_db():
 
         _ensure_column(conn, "offers", "no_plate_vehicle_id", "INTEGER")
         _ensure_column(conn, "offers", "np_gewicht", "TEXT")
-        _ensure_column(conn, "offers", "np_maandpremie", "REAL")
+        _ensure_column(conn, "offers", "np_maandpremie", "DOUBLE PRECISION")
         _ensure_column(conn, "offers", "np_cataloguswaarde", "TEXT")
         _ensure_column(conn, "offers", "np_cataloguswaarde_part", "TEXT")
         _ensure_column(conn, "offers", "np_cataloguswaarde_zak", "TEXT")
@@ -434,7 +280,7 @@ def ensure_db():
         conn.execute(
             """
             CREATE TABLE IF NOT EXISTS users (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                id SERIAL PRIMARY KEY,
                 username TEXT UNIQUE NOT NULL,
                 display_name TEXT NOT NULL,
                 password_hash TEXT NOT NULL,
@@ -451,6 +297,184 @@ def ensure_db():
         conn.commit()
 
 
+# -----------------------------
+# Login routes
+# -----------------------------
+@app.route("/login", methods=["GET", "POST"])
+def login():
+    ensure_db()
+
+    if session.get("logged_in"):
+        return redirect(url_for("dashboard"))
+
+    if request.method == "POST":
+        username = (request.form.get("username") or "").strip().lower()
+        password = request.form.get("password") or ""
+
+        with connect() as conn:
+            user = conn.execute(
+                """
+                SELECT id, username, display_name, password_hash, role, active
+                FROM users
+                WHERE username = %s
+                """,
+                (username,),
+            ).fetchone()
+
+        if user and int(user["active"] or 1) != 1:
+            flash("Dit account is uitgeschakeld.", "error")
+            return render_template("login.html")
+
+        if user and check_password_hash(user["password_hash"], password):
+            session["logged_in"] = True
+            session["user_id"] = user["id"]
+            session["username"] = user["username"]
+            session["display_name"] = user["display_name"]
+            session["role"] = user["role"]
+
+            with connect() as conn:
+                conn.execute(
+                    "UPDATE users SET last_login_at = %s WHERE id = %s",
+                    (datetime.now().strftime("%Y-%m-%d %H:%M:%S"), user["id"]),
+                )
+                conn.commit()
+
+            return redirect(url_for("dashboard"))
+
+        flash("Ongeldige gebruikersnaam of wachtwoord.", "error")
+
+    return render_template("login.html")
+
+
+@app.route("/logout")
+def logout():
+    session.clear()
+    return redirect(url_for("login"))
+
+
+@app.route("/account", methods=["GET", "POST"])
+@login_required
+def account():
+    ensure_db()
+
+    if request.method == "POST":
+        current_password = request.form.get("current_password") or ""
+        new_password = request.form.get("new_password") or ""
+        confirm_password = request.form.get("confirm_password") or ""
+
+        if len(new_password) < 8:
+            flash("Nieuw wachtwoord moet minimaal 8 tekens bevatten.", "error")
+            return redirect(url_for("account"))
+
+        if new_password != confirm_password:
+            flash("De nieuwe wachtwoorden komen niet overeen.", "error")
+            return redirect(url_for("account"))
+
+        username = session.get("username")
+
+        with connect() as conn:
+            user = conn.execute(
+                "SELECT id, password_hash FROM users WHERE username = %s",
+                (username,),
+            ).fetchone()
+
+            if not user or not check_password_hash(user["password_hash"], current_password):
+                flash("Huidig wachtwoord klopt niet.", "error")
+                return redirect(url_for("account"))
+
+            conn.execute(
+                "UPDATE users SET password_hash = %s WHERE id = %s",
+                (generate_password_hash(new_password), user["id"]),
+            )
+            conn.commit()
+
+        flash("Wachtwoord succesvol gewijzigd.", "ok")
+        return redirect(url_for("account"))
+
+    return render_template("account.html")
+
+
+@app.route("/admin/users")
+@admin_required
+def admin_users():
+    ensure_db()
+
+    with connect() as conn:
+        users = conn.execute(
+            """
+            SELECT id, username, display_name, role, active, created_at, last_login_at
+            FROM users
+            ORDER BY 
+                CASE WHEN role = 'admin' THEN 0 ELSE 1 END,
+                display_name ASC
+            """
+        ).fetchall()
+
+    return render_template("admin_users.html", users=users)
+
+
+@app.post("/admin/users/<int:user_id>/reset-password")
+@admin_required
+def admin_reset_password(user_id: int):
+    ensure_db()
+
+    with connect() as conn:
+        user = conn.execute(
+            "SELECT id, username, display_name FROM users WHERE id = %s",
+            (user_id,),
+        ).fetchone()
+
+        if not user:
+            flash("Gebruiker niet gevonden.", "error")
+            return redirect(url_for("admin_users"))
+
+        new_password = f"{user['display_name']}2026!"
+
+        conn.execute(
+            "UPDATE users SET password_hash = %s WHERE id = %s",
+            (generate_password_hash(new_password), user_id),
+        )
+        conn.commit()
+
+    flash(f"Wachtwoord gereset voor {user['display_name']}. Tijdelijk wachtwoord: {new_password}", "ok")
+    return redirect(url_for("admin_users"))
+
+
+@app.post("/admin/users/<int:user_id>/toggle-active")
+@admin_required
+def admin_toggle_user_active(user_id: int):
+    ensure_db()
+
+    if user_id == session.get("user_id"):
+        flash("Je kunt je eigen account niet uitschakelen.", "error")
+        return redirect(url_for("admin_users"))
+
+    with connect() as conn:
+        user = conn.execute(
+            "SELECT id, display_name, active FROM users WHERE id = %s",
+            (user_id,),
+        ).fetchone()
+
+        if not user:
+            flash("Gebruiker niet gevonden.", "error")
+            return redirect(url_for("admin_users"))
+
+        new_active = 0 if int(user["active"] or 1) == 1 else 1
+
+        conn.execute(
+            "UPDATE users SET active = %s WHERE id = %s",
+            (new_active, user_id),
+        )
+        conn.commit()
+
+    status = "ingeschakeld" if new_active == 1 else "uitgeschakeld"
+    flash(f"{user['display_name']} is {status}.", "ok")
+    return redirect(url_for("admin_users"))
+
+
+# -----------------------------
+# Helpers
+# -----------------------------
 def denylist_exists() -> bool:
     p = PROJECT_ROOT / "data" / "denylist.docx"
     return p.exists()
@@ -496,36 +520,7 @@ def _load_template_safe(rel_path: str):
         return None
 
 
-def _execute_retry(
-    conn: sqlite3.Connection,
-    sql: str,
-    params=(),
-    retries: int = 8,
-    sleep_s: float = 0.25,
-):
-    last_err = None
-    for _ in range(retries):
-        try:
-            return conn.execute(sql, params)
-        except sqlite3.OperationalError as e:
-            last_err = e
-            if "locked" in str(e).lower():
-                time.sleep(sleep_s)
-                continue
-            raise
-    raise last_err  # type: ignore[misc]
-
-
-def _np_label(r: sqlite3.Row) -> str:
-    parts = [
-        str(r["merk"] or "").strip(),
-        str(r["model"] or "").strip(),
-        str(r["type_model"] or "").strip(),
-    ]
-    return " ".join([p for p in parts if p]).strip() or f"No-plate #{r['id']}"
-
-
-def _pick_np_premie(np_row: sqlite3.Row, klant_type: str, regio: int):
+def _pick_np_premie(np_row, klant_type: str, regio: int):
     kt = (klant_type or "").strip().lower()
     try:
         r = int(regio)
@@ -543,7 +538,7 @@ def _pick_np_premie(np_row: sqlite3.Row, klant_type: str, regio: int):
         return None
 
 
-def _pick_np_catalogus(np_row: sqlite3.Row, klant_type: str, offer_row: sqlite3.Row):
+def _pick_np_catalogus(np_row, klant_type: str, offer_row):
     kt = (klant_type or "").strip().lower()
 
     if kt == "zakelijk":
@@ -588,31 +583,10 @@ def _format_nl_kenteken(kenteken: str) -> str:
     if len(s) != 6:
         return s
 
-    if re.match(r"^[A-Z]{2}\d{2}\d{2}$", s):
-        return f"{s[:2]}-{s[2:4]}-{s[4:]}"
-    if re.match(r"^\d{2}[A-Z]{2}\d{2}$", s):
-        return f"{s[:2]}-{s[2:4]}-{s[4:]}"
-    if re.match(r"^[A-Z]{2}\d{2}[A-Z]{2}$", s):
-        return f"{s[:2]}-{s[2:4]}-{s[4:]}"
-    if re.match(r"^[A-Z]{4}\d{2}$", s):
-        return f"{s[:2]}-{s[2:4]}-{s[4:]}"
-    if re.match(r"^\d{2}[A-Z]{4}$", s):
-        return f"{s[:2]}-{s[2:4]}-{s[4:]}"
-    if re.match(r"^\d{4}[A-Z]{2}$", s):
-        return f"{s[:2]}-{s[2:4]}-{s[4:]}"
     if re.match(r"^[A-Z]\d{3}[A-Z]{2}$", s):
-        return f"{s[:1]}-{s[1:4]}-{s[4:]}"
-    if re.match(r"^\d[A-Z]{3}\d{2}$", s):
         return f"{s[:1]}-{s[1:4]}-{s[4:]}"
     if re.match(r"^[A-Z]{2}\d{3}[A-Z]$", s):
         return f"{s[:2]}-{s[2:5]}-{s[5:]}"
-    if re.match(r"^\d{2}[A-Z]{3}\d$", s):
-        return f"{s[:2]}-{s[2:5]}-{s[5:]}"
-    if re.match(r"^[A-Z]{3}\d{2}[A-Z]$", s):
-        return f"{s[:3]}-{s[3:5]}-{s[5:]}"
-    if re.match(r"^[A-Z]\d{2}[A-Z]{3}$", s):
-        return f"{s[:1]}-{s[1:3]}-{s[3:]}"
-
     return f"{s[:2]}-{s[2:4]}-{s[4:]}"
 
 
@@ -667,9 +641,6 @@ def _klant_display_for_filename(klantnaam: str, klant_type: str) -> str:
         return kn
 
     aanhef, achternaam = guess_aanhef_en_achternaam(kn)
-    aanhef = (aanhef or "").strip()
-    achternaam = (achternaam or "").strip()
-
     initials = _initials_from_name(kn, achternaam)
 
     parts = [p for p in [aanhef, initials, achternaam] if p]
@@ -678,45 +649,28 @@ def _klant_display_for_filename(klantnaam: str, klant_type: str) -> str:
 
 def _short_offer_no_for_filename(offer_no: str) -> str:
     s = (offer_no or "").strip()
-    if not s:
-        return s
-
     parts = s.split("-")
-    if not parts:
-        return s
-
-    last = parts[-1]
-    if last.isdigit():
-        last2 = last.lstrip("0") or "0"
-        parts[-1] = last2
+    if parts and parts[-1].isdigit():
+        parts[-1] = parts[-1].lstrip("0") or "0"
         return "-".join(parts)
-
     return s
 
 
 def _offer_pdf_filename_base(klantnaam: str, klant_type: str, offer_no: str) -> str:
     display = _klant_display_for_filename(klantnaam, klant_type)
     short_no = _short_offer_no_for_filename(offer_no)
-    name = f"Verzekeringsvoorstel voor {display} - {short_no}"
-    return _safe_filename(name)
+    return _safe_filename(f"Verzekeringsvoorstel voor {display} - {short_no}")
 
 
 def _normalize_dekking_override(v: str) -> str:
     s = (v or "").strip().lower()
     if not s:
         return ""
-    if s in ("wa",):
+    if s == "wa":
         return "WA"
     if s in ("wa beperkt casco", "wa / beperkt casco", "beperkt casco"):
         return "WA / Beperkt Casco"
-    if s in (
-        "allrisk",
-        "wa casco compleet",
-        "wa / casco compleet",
-        "wa / casco compleet (allrisk)",
-        "casco compleet",
-        "casco compleet (allrisk)",
-    ):
+    if s in ("allrisk", "wa casco compleet", "wa / casco compleet", "wa / casco compleet (allrisk)", "casco compleet", "casco compleet (allrisk)"):
         return "WA / Casco Compleet (Allrisk)"
     return (v or "").strip()
 
@@ -740,9 +694,7 @@ def _compose_dekking(auto_dekking: str, dekking_override: str, extra_svi, extra_
             seen.add(rb.lower())
 
     return " / ".join(parts)
-
-
-# -----------------------------
+    # -----------------------------
 # Routes
 # -----------------------------
 @app.route("/")
@@ -759,7 +711,9 @@ def dashboard():
             WHERE is_blocked = 0 AND delivery_status IN ('email_klaar','post_klaar')
             """
         ).fetchone()["c"]
-        blocked = conn.execute("SELECT COUNT(*) AS c FROM offers WHERE is_blocked = 1").fetchone()["c"]
+        blocked = conn.execute(
+            "SELECT COUNT(*) AS c FROM offers WHERE is_blocked = 1"
+        ).fetchone()["c"]
 
     return render_template(
         "dashboard.html",
@@ -768,7 +722,7 @@ def dashboard():
         blocked=blocked,
         last_batch_id=last_batch_id,
         denylist_exists=denylist_exists(),
-        db_path=str(DB_PATH),
+        db_path="Supabase PostgreSQL",
     )
 
 
@@ -809,16 +763,17 @@ def import_page():
 
         try:
             n = import_excel(str(excel_path), deny_path)
+
             batch_id = get_last_batch_id()
             if batch_id:
                 with connect() as conn:
                     conn.execute(
                         """
                         UPDATE offers
-                        SET created_by = COALESCE(NULLIF(created_by, ''), ?),
-                            updated_by = ?,
-                            updated_at = ?
-                        WHERE batch_id = ?
+                        SET created_by = COALESCE(NULLIF(created_by, ''), %s),
+                            updated_by = %s,
+                            updated_at = %s
+                        WHERE batch_id = %s
                         """,
                         (
                             current_user_display(),
@@ -865,19 +820,20 @@ def offers():
            maandpremie, dienstverlening_bedrag,
            svj_override, is_bestaande_klant,
            revision_of, revision_no,
-           no_plate_vehicle_id, np_gewicht, np_maandpremie, np_cataloguswaarde, np_cataloguswaarde_part, np_cataloguswaarde_zak,
-           created_by, updated_by, updated_at
+           no_plate_vehicle_id, np_gewicht, np_maandpremie,
+           np_cataloguswaarde, np_cataloguswaarde_part, np_cataloguswaarde_zak,
+           created_by, updated_by, updated_at, mail_template_type
     FROM offers
     WHERE 1=1
     """
     params = []
 
     if month:
-        sql += " AND month_key = ?"
+        sql += " AND month_key = %s"
         params.append(month)
 
     if q:
-        sql += " AND (klantnaam LIKE ? OR kenteken LIKE ? OR email LIKE ? OR offer_no LIKE ?)"
+        sql += " AND (klantnaam ILIKE %s OR kenteken ILIKE %s OR email ILIKE %s OR offer_no ILIKE %s)"
         like = f"%{q}%"
         params.extend([like, like, like, like])
 
@@ -885,7 +841,7 @@ def offers():
         if delivery == "geblokkeerd":
             sql += " AND is_blocked = 1"
         else:
-            sql += " AND is_blocked = 0 AND delivery_status = ?"
+            sql += " AND is_blocked = 0 AND delivery_status = %s"
             params.append(delivery)
 
     sql += """
@@ -894,15 +850,15 @@ def offers():
             WHEN COALESCE(offer_pdf_path,'')='' AND COALESCE(eml_path,'')='' AND COALESCE(post_letter_path,'')=''
             THEN 0 ELSE 1
         END ASC,
-        CASE WHEN lower(klant_type)='zakelijk' THEN 1 ELSE 0 END ASC,
-        CAST(COALESCE(regio, 999) AS INTEGER) ASC,
+        CASE WHEN lower(COALESCE(klant_type,''))='zakelijk' THEN 1 ELSE 0 END ASC,
+        COALESCE(regio, 999) ASC,
         created_at DESC,
         offer_no DESC
     LIMIT 500
     """
 
     with connect() as conn:
-        rows = conn.execute(sql, params).fetchall()
+        rows = conn.execute(sql, tuple(params)).fetchall()
         months = conn.execute(
             """
             SELECT DISTINCT month_key FROM offers
@@ -945,46 +901,52 @@ def update_offer_meta(offer_no: str):
     ensure_db()
     next_url = request.form.get("next") or url_for("offers")
 
-    maandpremie_raw = (request.form.get("maandpremie") or "").strip()
-    np_maandpremie_raw = (request.form.get("np_maandpremie") or "").strip()
-    svj_raw = (request.form.get("svj_override") or "").strip()
+    maandpremie = _parse_float((request.form.get("maandpremie") or "").strip())
+    np_maandpremie = _parse_float((request.form.get("np_maandpremie") or "").strip())
+    svj_override = _parse_int((request.form.get("svj_override") or "").strip())
+
     dekking_override = _normalize_dekking_override(request.form.get("dekking_override") or "") or None
     extra_svi = 1 if request.form.get("extra_svi") in ("1", "on", "true", "True") else 0
     extra_rb = 1 if request.form.get("extra_rb") in ("1", "on", "true", "True") else 0
-
     is_bestaande_klant = 1 if request.form.get("is_bestaande_klant") in ("1", "on", "true", "True") else 0
 
     revision_of = (request.form.get("revision_of") or "").strip() or None
-    revision_no_raw = (request.form.get("revision_no") or "").strip()
-
-    maandpremie = _parse_float(maandpremie_raw)
-    dienstverlening = round(maandpremie * 0.18, 2) if maandpremie is not None else None
-
-    np_maandpremie = _parse_float(np_maandpremie_raw)
-
-    svj_override = _parse_int(svj_raw)
-    revision_no = _parse_int(revision_no_raw)
+    revision_no = _parse_int((request.form.get("revision_no") or "").strip())
     if revision_of is None:
         revision_no = 0
+
+    mail_template_type = (request.form.get("mail_template_type") or "auto").strip()
+    if mail_template_type not in (
+        "auto",
+        "definitief",
+        "prospect",
+        "bestaand_particulier",
+        "bestaand_zakelijk",
+        "aangepast",
+    ):
+        mail_template_type = "auto"
+
+    dienstverlening = round(maandpremie * 0.18, 2) if maandpremie is not None else None
 
     with connect() as conn:
         _execute_retry(
             conn,
             """
             UPDATE offers
-            SET maandpremie = ?,
-                dienstverlening_bedrag = ?,
-                np_maandpremie = ?,
-                svj_override = ?,
-                dekking_override = ?,
-                extra_svi = ?,
-                extra_rb = ?,
-                is_bestaande_klant = ?,
-                revision_of = ?,
-                revision_no = ?,
-                updated_by = ?,
-                updated_at = ?
-            WHERE offer_no = ?
+            SET maandpremie = %s,
+                dienstverlening_bedrag = %s,
+                np_maandpremie = %s,
+                svj_override = %s,
+                dekking_override = %s,
+                extra_svi = %s,
+                extra_rb = %s,
+                is_bestaande_klant = %s,
+                revision_of = %s,
+                revision_no = %s,
+                mail_template_type = %s,
+                updated_by = %s,
+                updated_at = %s
+            WHERE offer_no = %s
             """,
             (
                 maandpremie,
@@ -997,6 +959,7 @@ def update_offer_meta(offer_no: str):
                 is_bestaande_klant,
                 revision_of,
                 revision_no,
+                mail_template_type,
                 current_user_display(),
                 datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
                 offer_no,
@@ -1026,17 +989,18 @@ def set_decision(offer_no: str):
             conn,
             """
             UPDATE offers
-            SET decision_status = ?,
-                call_status = ?,
-                last_call_at = CASE WHEN ? != 'open' THEN date('now') ELSE last_call_at END,
-                updated_by = ?,
-                updated_at = ?
-            WHERE offer_no = ?
+            SET decision_status = %s,
+                call_status = %s,
+                last_call_at = CASE WHEN %s != 'open' THEN %s ELSE last_call_at END,
+                updated_by = %s,
+                updated_at = %s
+            WHERE offer_no = %s
             """,
             (
                 decision,
                 new_call_status,
                 decision,
+                datetime.now().strftime("%Y-%m-%d"),
                 current_user_display(),
                 datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
                 offer_no,
@@ -1055,7 +1019,7 @@ def delete_offer(offer_no: str):
 
     with connect() as conn:
         row = conn.execute(
-            "SELECT offer_pdf_path, eml_path, post_letter_path FROM offers WHERE offer_no = ?",
+            "SELECT offer_pdf_path, eml_path, post_letter_path FROM offers WHERE offer_no = %s",
             (offer_no,),
         ).fetchone()
 
@@ -1072,7 +1036,7 @@ def delete_offer(offer_no: str):
                 except Exception:
                     pass
 
-        _execute_retry(conn, "DELETE FROM offers WHERE offer_no = ?", (offer_no,))
+        _execute_retry(conn, "DELETE FROM offers WHERE offer_no = %s", (offer_no,))
         conn.commit()
 
     flash(f"Offerte verwijderd: {offer_no}", "ok")
@@ -1086,7 +1050,7 @@ def download_postbrief(offer_no: str):
     now = datetime.now()
 
     with connect() as conn:
-        r = conn.execute("SELECT * FROM offers WHERE offer_no = ?", (offer_no,)).fetchone()
+        r = conn.execute("SELECT * FROM offers WHERE offer_no = %s", (offer_no,)).fetchone()
         if not r:
             flash("Offerte niet gevonden.", "error")
             return redirect(url_for("offers"))
@@ -1096,12 +1060,11 @@ def download_postbrief(offer_no: str):
             flash("Deze klant heeft een e-mailadres; postbrief is niet nodig.", "error")
             return redirect(url_for("offers"))
 
-        db_path = PROJECT_ROOT / "data" / "app.db"
         vinfo = get_vehicle_info(
             kenteken=r["kenteken"] or "",
             merk=r["merk"] or "",
             model=r["model"] or "",
-            db_path=db_path,
+            db_path=LOCAL_SQLITE_DB_PATH,
         )
 
         auto_str = " ".join([x for x in [vinfo.merk, vinfo.model] if x]).strip()
@@ -1127,12 +1090,12 @@ def download_postbrief(offer_no: str):
             conn,
             """
             UPDATE offers
-            SET post_letter_path = ?,
+            SET post_letter_path = %s,
                 delivery_method = 'post',
                 delivery_status = 'post_klaar',
-                updated_by = ?,
-                updated_at = ?
-            WHERE offer_no = ?
+                updated_by = %s,
+                updated_at = %s
+            WHERE offer_no = %s
             """,
             (
                 post_letter_path,
@@ -1147,6 +1110,9 @@ def download_postbrief(offer_no: str):
     return send_file(abs_path, as_attachment=True, download_name=f"Postbrief_{offer_no}.pdf")
 
 
+# -----------------------------
+# No-plate routes
+# -----------------------------
 @app.route("/no-plate", methods=["GET", "POST"])
 @login_required
 def no_plate():
@@ -1164,7 +1130,6 @@ def no_plate():
             voertuig_type = "personenauto"
 
         bouwjaar = _parse_int(request.form.get("bouwjaar"))
-
         brandstof = (request.form.get("brandstof") or "").strip()
         gewicht = (request.form.get("gewicht") or "").strip()
 
@@ -1176,15 +1141,24 @@ def no_plate():
             return _parse_float((request.form.get(name) or "").strip())
 
         data = (
-            merk, model, type_model,
-            voertuig_type, bouwjaar,
+            merk,
+            model,
+            type_model,
+            voertuig_type,
+            bouwjaar,
             brandstof,
             catalogus_legacy,
             gewicht,
             catalogus_part,
             catalogus_zak,
-            f("premie_part_r1"), f("premie_part_r2"), f("premie_part_r3"), f("premie_part_r4"),
-            f("premie_zak_r1"), f("premie_zak_r2"), f("premie_zak_r3"), f("premie_zak_r4"),
+            f("premie_part_r1"),
+            f("premie_part_r2"),
+            f("premie_part_r3"),
+            f("premie_part_r4"),
+            f("premie_zak_r1"),
+            f("premie_zak_r2"),
+            f("premie_zak_r3"),
+            f("premie_zak_r4"),
         )
 
         with connect() as conn:
@@ -1193,24 +1167,22 @@ def no_plate():
                     conn,
                     """
                     UPDATE no_plate_vehicles
-                    SET merk=?, model=?, type_model=?,
-                        voertuig_type=?, bouwjaar=?,
-                        brandstof=?,
-                        cataloguswaarde=?,
-                        gewicht=?,
-                        cataloguswaarde_part=?,
-                        cataloguswaarde_zak=?,
-                        premie_part_r1=?, premie_part_r2=?, premie_part_r3=?, premie_part_r4=?,
-                        premie_zak_r1=?, premie_zak_r2=?, premie_zak_r3=?, premie_zak_r4=?
-                    WHERE id=?
+                    SET merk=%s, model=%s, type_model=%s,
+                        voertuig_type=%s, bouwjaar=%s,
+                        brandstof=%s,
+                        cataloguswaarde=%s,
+                        gewicht=%s,
+                        cataloguswaarde_part=%s,
+                        cataloguswaarde_zak=%s,
+                        premie_part_r1=%s, premie_part_r2=%s, premie_part_r3=%s, premie_part_r4=%s,
+                        premie_zak_r1=%s, premie_zak_r2=%s, premie_zak_r3=%s, premie_zak_r4=%s
+                    WHERE id=%s
                     """,
                     data + (int(vid),),
                 )
-                conn.commit()
                 flash("No-plate voertuig bijgewerkt.", "ok")
             else:
                 created_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-
                 _execute_retry(
                     conn,
                     """
@@ -1225,23 +1197,25 @@ def no_plate():
                         premie_part_r1, premie_part_r2, premie_part_r3, premie_part_r4,
                         premie_zak_r1, premie_zak_r2, premie_zak_r3, premie_zak_r4,
                         created_at
-                    ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                    ) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
                     """,
                     data + (created_at,),
                 )
-                conn.commit()
                 flash("No-plate voertuig toegevoegd.", "ok")
+
+            conn.commit()
 
         return redirect(url_for("no_plate"))
 
     q = (request.args.get("q") or "").strip()
+
     with connect() as conn:
         if q:
             like = f"%{q}%"
             rows = conn.execute(
                 """
                 SELECT * FROM no_plate_vehicles
-                WHERE merk LIKE ? OR model LIKE ? OR type_model LIKE ?
+                WHERE merk ILIKE %s OR model ILIKE %s OR type_model ILIKE %s
                 ORDER BY created_at DESC, id DESC
                 LIMIT 500
                 """,
@@ -1260,7 +1234,7 @@ def no_plate():
 def no_plate_delete(vid: int):
     ensure_db()
     with connect() as conn:
-        _execute_retry(conn, "DELETE FROM no_plate_vehicles WHERE id = ?", (vid,))
+        _execute_retry(conn, "DELETE FROM no_plate_vehicles WHERE id = %s", (vid,))
         conn.commit()
     flash("No-plate voertuig verwijderd.", "ok")
     return redirect(url_for("no_plate"))
@@ -1280,9 +1254,9 @@ def no_plate_search():
                 """
                 SELECT id, merk, model, type_model, voertuig_type
                 FROM no_plate_vehicles
-                WHERE merk LIKE ? OR model LIKE ? OR type_model LIKE ?
+                WHERE merk ILIKE %s OR model ILIKE %s OR type_model ILIKE %s
                 ORDER BY created_at DESC, id DESC
-                LIMIT ?
+                LIMIT %s
                 """,
                 (like, like, like, limit),
             ).fetchall()
@@ -1292,7 +1266,7 @@ def no_plate_search():
                 SELECT id, merk, model, type_model, voertuig_type
                 FROM no_plate_vehicles
                 ORDER BY created_at DESC, id DESC
-                LIMIT ?
+                LIMIT %s
                 """,
                 (limit,),
             ).fetchall()
@@ -1317,6 +1291,7 @@ def no_plate_search():
                 "voertuig_type": (r["voertuig_type"] or "").strip(),
             }
         )
+
     return jsonify({"items": items})
 
 
@@ -1332,7 +1307,11 @@ def set_no_plate_for_offer(offer_no: str):
         return redirect(next_url)
 
     with connect() as conn:
-        np_row = conn.execute("SELECT * FROM no_plate_vehicles WHERE id = ?", (int(vid),)).fetchone()
+        np_row = conn.execute(
+            "SELECT * FROM no_plate_vehicles WHERE id = %s",
+            (int(vid),),
+        ).fetchone()
+
         if not np_row:
             flash("No-plate voertuig niet gevonden.", "error")
             return redirect(next_url)
@@ -1341,16 +1320,16 @@ def set_no_plate_for_offer(offer_no: str):
             conn,
             """
             UPDATE offers
-            SET no_plate_vehicle_id = ?,
+            SET no_plate_vehicle_id = %s,
                 kenteken = '',
-                merk = ?,
-                model = ?,
-                type_model = ?,
-                voertuig_type = COALESCE(NULLIF(?,''), voertuig_type),
-                bouwjaar = COALESCE(?, bouwjaar),
-                updated_by = ?,
-                updated_at = ?
-            WHERE offer_no = ?
+                merk = %s,
+                model = %s,
+                type_model = %s,
+                voertuig_type = COALESCE(NULLIF(%s,''), voertuig_type),
+                bouwjaar = COALESCE(%s, bouwjaar),
+                updated_by = %s,
+                updated_at = %s
+            WHERE offer_no = %s
             """,
             (
                 int(vid),
@@ -1370,16 +1349,33 @@ def set_no_plate_for_offer(offer_no: str):
     return redirect(next_url)
 
 
+# -----------------------------
+# Export helpers
+# -----------------------------
 def _choose_mail_template(
     klant_type: str,
     is_bestaande_klant: bool,
     revision_no: int,
+    mail_template_type: str,
     tpl_def,
     tpl_pro,
     tpl_bestaand_part,
     tpl_bestaand_zak,
     tpl_aangepast,
 ):
+    selected = (mail_template_type or "auto").strip()
+
+    if selected == "prospect":
+        return tpl_pro
+    if selected == "bestaand_particulier" and tpl_bestaand_part is not None:
+        return tpl_bestaand_part
+    if selected == "bestaand_zakelijk" and tpl_bestaand_zak is not None:
+        return tpl_bestaand_zak
+    if selected == "aangepast" and tpl_aangepast is not None:
+        return tpl_aangepast
+    if selected == "definitief":
+        return tpl_def
+
     if revision_no > 0 and tpl_aangepast is not None:
         return tpl_aangepast
 
@@ -1400,27 +1396,28 @@ def _subject_for_offer(klant_type: str, revision_no: int, offer_no: str) -> str:
     return f"Verzekeringsvoorstel Dekkerautoverzekering {offer_no}"
 
 
-def _build_pdf_and_delivery(conn: sqlite3.Connection, r: sqlite3.Row, now: datetime):
+def _build_pdf_and_delivery(conn, r, now: datetime):
     offer_no = r["offer_no"]
     klant_type = (r["klant_type"] or "particulier").strip().lower()
     email = (r["email"] or "").strip() or None
 
     is_bestaande_klant = int(r["is_bestaande_klant"] or 0) == 1
     revision_no = int(r["revision_no"] or 0)
+    mail_template_type = r.get("mail_template_type") or "auto"
 
     tpl_def = load_template("templates/mail_definitief.html")
     tpl_pro = load_template("templates/mail_prospect.html")
-
     tpl_bestaand_part = _load_template_safe("templates/mail_bestaand_particulier.html")
     tpl_bestaand_zak = _load_template_safe("templates/mail_bestaand_zakelijk.html")
     tpl_aangepast = _load_template_safe("templates/mail_aangepast.html")
 
     kenteken_db = (r["kenteken"] or "").strip()
     np_row = None
+
     if not kenteken_db and r["no_plate_vehicle_id"] is not None:
         try:
             np_row = conn.execute(
-                "SELECT * FROM no_plate_vehicles WHERE id = ?",
+                "SELECT * FROM no_plate_vehicles WHERE id = %s",
                 (int(r["no_plate_vehicle_id"]),),
             ).fetchone()
         except Exception:
@@ -1429,47 +1426,33 @@ def _build_pdf_and_delivery(conn: sqlite3.Connection, r: sqlite3.Row, now: datet
     if np_row:
         np_merk = (np_row["merk"] or "").strip()
         np_model = (np_row["model"] or "").strip()
-        np_type_model = (np_row["type_model"] or "").strip()
-
         voertuig_type = (np_row["voertuig_type"] or "personenauto").strip().lower()
         if voertuig_type not in ("personenauto", "bestelauto"):
             voertuig_type = "personenauto"
 
-        bouwjaar_np = np_row["bouwjaar"]
-        bouwjaar_final = str(bouwjaar_np) if bouwjaar_np is not None else (str(r["bouwjaar"] or "").strip())
-
+        bouwjaar_final = str(np_row["bouwjaar"]) if np_row["bouwjaar"] is not None else str(r["bouwjaar"] or "").strip()
         brandstof_final = (np_row["brandstof"] or "").strip()
         gewicht_final = (r["np_gewicht"] or np_row["gewicht"] or "").strip()
-
         catalogus_final = _pick_np_catalogus(np_row, klant_type, r)
 
         auto_str = " ".join([x for x in [np_merk, np_model] if x]).strip()
 
-        bj_int = None
-        try:
-            bj_int = int(bouwjaar_final) if str(bouwjaar_final).strip() else None
-        except Exception:
-            bj_int = None
+        bj_int = _parse_int(bouwjaar_final)
         dekking = bepaal_dekking(bj_int)
-
-        meldcode_final = "-"
 
         np_maandpremie = r["np_maandpremie"] if "np_maandpremie" in r.keys() else None
         maandpremie = r["maandpremie"] if "maandpremie" in r.keys() else None
+        premie_final = np_maandpremie if np_maandpremie is not None else maandpremie
 
-        premie_final = None
-        if np_maandpremie is not None:
-            premie_final = np_maandpremie
-        elif maandpremie is not None:
-            premie_final = maandpremie
-        else:
+        if premie_final is None:
             premie_final = _pick_np_premie(np_row, klant_type, int(r["regio"] or 0))
 
-        svj_override = r["svj_override"] if "svj_override" in r.keys() else None
-        dekking_override = r["dekking_override"] if "dekking_override" in r.keys() else None
-        extra_svi = r["extra_svi"] if "extra_svi" in r.keys() else 0
-        extra_rb = r["extra_rb"] if "extra_rb" in r.keys() else 0
-        dekking_final = _compose_dekking(dekking, dekking_override, extra_svi, extra_rb)
+        dekking_final = _compose_dekking(
+            dekking,
+            r["dekking_override"] if "dekking_override" in r.keys() else None,
+            r["extra_svi"] if "extra_svi" in r.keys() else 0,
+            r["extra_rb"] if "extra_rb" in r.keys() else 0,
+        )
 
         offer_pdf_path = generate_offer_pdf(
             out_base_dir="data/offers",
@@ -1495,17 +1478,17 @@ def _build_pdf_and_delivery(conn: sqlite3.Connection, r: sqlite3.Row, now: datet
             offer={
                 "regio": r["regio"] if r["regio"] is not None else "",
                 "dekking": dekking_final,
-                "dekking_override": dekking_override or "",
-                "extra_svi": extra_svi,
-                "extra_rb": extra_rb,
+                "dekking_override": r["dekking_override"] or "",
+                "extra_svi": r["extra_svi"],
+                "extra_rb": r["extra_rb"],
                 "gewicht": gewicht_final,
                 "bouwjaar": bouwjaar_final,
                 "cataloguswaarde": catalogus_final,
                 "dagwaarde": "",
                 "bpm": "",
-                "meldcode": meldcode_final,
+                "meldcode": "-",
                 "premie_maand": premie_final,
-                "svj_override": svj_override,
+                "svj_override": r["svj_override"],
                 "waarde_al_in_context": "1",
             },
             filename_base=_offer_pdf_filename_base(r["klantnaam"] or "", klant_type, offer_no),
@@ -1515,26 +1498,19 @@ def _build_pdf_and_delivery(conn: sqlite3.Connection, r: sqlite3.Row, now: datet
         kenteken_lookup = _kenteken_lookup_value(kenteken_db)
         kenteken_display = _format_nl_kenteken(kenteken_db)
 
-        db_path = PROJECT_ROOT / "data" / "app.db"
         vinfo = get_vehicle_info(
             kenteken=kenteken_lookup,
             merk=r["merk"] or "",
             model=r["model"] or "",
-            db_path=db_path,
+            db_path=LOCAL_SQLITE_DB_PATH,
         )
 
         db_voertuig_type = str(r["voertuig_type"] or "").strip()
         vinfo_voertuig_type = getattr(vinfo, "voertuig_type", "") or ""
         voertuig_type = (vinfo_voertuig_type or db_voertuig_type or "personenauto").strip().lower()
 
-        bj_int = None
-        try:
-            bj_int = int(vinfo.bouwjaar) if (vinfo.bouwjaar or "").strip() else None
-        except Exception:
-            bj_int = None
+        bj_int = _parse_int(getattr(vinfo, "bouwjaar", "") or "")
         dekking = bepaal_dekking(bj_int)
-
-        auto_str = " ".join([x for x in [vinfo.merk, vinfo.model] if x]).strip()
 
         meldcode_rolls = ""
         voertuig_type_rolls = ""
@@ -1547,15 +1523,16 @@ def _build_pdf_and_delivery(conn: sqlite3.Connection, r: sqlite3.Row, now: datet
         if voertuig_type_rolls and (not vinfo_voertuig_type) and (not db_voertuig_type):
             voertuig_type = voertuig_type_rolls.strip().lower()
 
-        vinfo_meldcode = getattr(vinfo, "meldcode", "") or ""
-        meldcode_final = (meldcode_rolls or vinfo_meldcode or "—").strip()
+        meldcode_final = (meldcode_rolls or getattr(vinfo, "meldcode", "") or "—").strip()
 
-        maandpremie = r["maandpremie"] if "maandpremie" in r.keys() else None
-        svj_override = r["svj_override"] if "svj_override" in r.keys() else None
-        dekking_override = r["dekking_override"] if "dekking_override" in r.keys() else None
-        extra_svi = r["extra_svi"] if "extra_svi" in r.keys() else 0
-        extra_rb = r["extra_rb"] if "extra_rb" in r.keys() else 0
-        dekking_final = _compose_dekking(dekking, dekking_override, extra_svi, extra_rb)
+        dekking_final = _compose_dekking(
+            dekking,
+            r["dekking_override"] if "dekking_override" in r.keys() else None,
+            r["extra_svi"] if "extra_svi" in r.keys() else 0,
+            r["extra_rb"] if "extra_rb" in r.keys() else 0,
+        )
+
+        auto_str = " ".join([x for x in [vinfo.merk, vinfo.model] if x]).strip()
 
         offer_pdf_path = generate_offer_pdf(
             out_base_dir="data/offers",
@@ -1581,9 +1558,9 @@ def _build_pdf_and_delivery(conn: sqlite3.Connection, r: sqlite3.Row, now: datet
             offer={
                 "regio": r["regio"] if r["regio"] is not None else "",
                 "dekking": dekking_final,
-                "dekking_override": dekking_override or "",
-                "extra_svi": extra_svi,
-                "extra_rb": extra_rb,
+                "dekking_override": r["dekking_override"] or "",
+                "extra_svi": r["extra_svi"],
+                "extra_rb": r["extra_rb"],
                 "gewicht": getattr(vinfo, "ledig_gewicht", "") or "",
                 "bouwjaar": getattr(vinfo, "bouwjaar", "") or "",
                 "cataloguswaarde": getattr(vinfo, "cataloguswaarde", "") or "",
@@ -1592,8 +1569,8 @@ def _build_pdf_and_delivery(conn: sqlite3.Connection, r: sqlite3.Row, now: datet
                 "meldcode": meldcode_final,
                 "is_schatting": "1" if getattr(vinfo, "is_schatting", False) else "",
                 "schatting_toelichting": getattr(vinfo, "schatting_toelichting", "") or "",
-                "premie_maand": maandpremie,
-                "svj_override": svj_override,
+                "premie_maand": r["maandpremie"],
+                "svj_override": r["svj_override"],
             },
             filename_base=_offer_pdf_filename_base(r["klantnaam"] or "", klant_type, offer_no),
         )
@@ -1603,6 +1580,7 @@ def _build_pdf_and_delivery(conn: sqlite3.Connection, r: sqlite3.Row, now: datet
             klant_type=klant_type,
             is_bestaande_klant=is_bestaande_klant,
             revision_no=revision_no,
+            mail_template_type=mail_template_type,
             tpl_def=tpl_def,
             tpl_pro=tpl_pro,
             tpl_bestaand_part=tpl_bestaand_part,
@@ -1650,10 +1628,14 @@ def _build_pdf_and_delivery(conn: sqlite3.Connection, r: sqlite3.Row, now: datet
             conn,
             """
             UPDATE offers
-            SET offer_pdf_path = ?, eml_path = ?, post_letter_path = NULL,
-                delivery_method = 'email', delivery_status = 'email_klaar',
-                updated_by = ?, updated_at = ?
-            WHERE offer_no = ?
+            SET offer_pdf_path = %s,
+                eml_path = %s,
+                post_letter_path = NULL,
+                delivery_method = 'email',
+                delivery_status = 'email_klaar',
+                updated_by = %s,
+                updated_at = %s
+            WHERE offer_no = %s
             """,
             (
                 offer_pdf_path,
@@ -1683,10 +1665,14 @@ def _build_pdf_and_delivery(conn: sqlite3.Connection, r: sqlite3.Row, now: datet
         conn,
         """
         UPDATE offers
-        SET offer_pdf_path = ?, post_letter_path = ?, eml_path = NULL,
-            delivery_method = 'post', delivery_status = 'post_klaar',
-            updated_by = ?, updated_at = ?
-        WHERE offer_no = ?
+        SET offer_pdf_path = %s,
+            post_letter_path = %s,
+            eml_path = NULL,
+            delivery_method = 'post',
+            delivery_status = 'post_klaar',
+            updated_by = %s,
+            updated_at = %s
+        WHERE offer_no = %s
         """,
         (
             offer_pdf_path,
@@ -1713,7 +1699,6 @@ def export_last_batch():
     processed = 0
     mails = 0
     posts = 0
-
     msg_rows = []
     post_rows = []
 
@@ -1722,14 +1707,14 @@ def export_last_batch():
             """
             SELECT * FROM offers
             WHERE is_blocked = 0
-              AND batch_id = ?
+              AND batch_id = %s
             ORDER BY
                 CASE
                     WHEN COALESCE(offer_pdf_path,'')='' AND COALESCE(eml_path,'')='' AND COALESCE(post_letter_path,'')=''
                     THEN 0 ELSE 1
                 END ASC,
-                CASE WHEN lower(klant_type)='zakelijk' THEN 1 ELSE 0 END ASC,
-                CAST(COALESCE(regio, 999) AS INTEGER) ASC,
+                CASE WHEN lower(COALESCE(klant_type,''))='zakelijk' THEN 1 ELSE 0 END ASC,
+                COALESCE(regio, 999) ASC,
                 created_at DESC,
                 offer_no DESC
             """,
@@ -1739,6 +1724,7 @@ def export_last_batch():
         for r in rows:
             info = _build_pdf_and_delivery(conn, r, now)
             processed += 1
+
             if info["kind"] == "email":
                 mails += 1
                 msg_rows.append(
@@ -1781,7 +1767,8 @@ def export_one_offer(offer_no: str):
     next_url = request.form.get("next") or url_for("offers")
 
     with connect() as conn:
-        r = conn.execute("SELECT * FROM offers WHERE offer_no = ?", (offer_no,)).fetchone()
+        r = conn.execute("SELECT * FROM offers WHERE offer_no = %s", (offer_no,)).fetchone()
+
         if not r:
             flash("Offerte niet gevonden.", "error")
             return redirect(next_url)
@@ -1797,10 +1784,35 @@ def export_one_offer(offer_no: str):
     return redirect(next_url)
 
 
+@app.get("/offer/<offer_no>/preview-pdf")
+@login_required
+def preview_offer_pdf(offer_no: str):
+    ensure_db()
+    now = datetime.now()
+
+    with connect() as conn:
+        r = conn.execute("SELECT * FROM offers WHERE offer_no = %s", (offer_no,)).fetchone()
+
+        if not r:
+            flash("Offerte niet gevonden.", "error")
+            return redirect(url_for("offers"))
+
+        info = _build_pdf_and_delivery(conn, r, now)
+        conn.commit()
+
+    abs_path = (PROJECT_ROOT / info["pdf"]).resolve()
+    if not abs_path.exists():
+        flash("PDF kon niet worden gevonden.", "error")
+        return redirect(url_for("offers"))
+
+    return send_file(abs_path, as_attachment=False)
+
+
 @app.get("/file")
 @login_required
 def get_file():
     rel = request.args.get("path", "").strip()
+
     if not rel:
         flash("Geen bestand opgegeven.", "error")
         return redirect(url_for("offers"))
@@ -1829,6 +1841,7 @@ def browse(kind: str):
         "post": PROJECT_ROOT / "data" / "post",
         "inbox": PROJECT_ROOT / "data" / "inbox",
     }
+
     base = mapping.get(kind)
     if not base:
         flash("Onbekende map.", "error")
@@ -1840,6 +1853,7 @@ def browse(kind: str):
     for p in sorted(base.rglob("*"), key=lambda x: str(x).lower()):
         if p.is_dir():
             continue
+
         st = p.stat()
         items.append(
             {

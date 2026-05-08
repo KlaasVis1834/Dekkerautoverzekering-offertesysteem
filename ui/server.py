@@ -99,8 +99,36 @@ def login_required(f):
 # DB helpers PostgreSQL / Supabase
 # -----------------------------
 def connect():
+
+    global DB_POOL
+
     if not DATABASE_URL:
+
         raise RuntimeError("DATABASE_URL ontbreekt. Zet deze in Render Environment Variables.")
+
+    if DB_POOL is None:
+
+        DB_POOL = ConnectionPool(
+
+            conninfo=DATABASE_URL,
+
+            min_size=1,
+
+            max_size=5,
+
+            kwargs={
+
+                "row_factory": dict_row,
+
+                "connect_timeout": 15,
+
+                "prepare_threshold": None,
+
+            },
+
+        )
+
+    return DB_POOL.connection()
 
     return psycopg.connect(
         DATABASE_URL,

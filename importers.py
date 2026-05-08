@@ -34,19 +34,11 @@ def _followup_due(dt: date) -> str:
 
 
 def _normalize_klant_type(raw: str) -> str:
-    """
-    Excel kolom F kan codes/labels bevatten zoals:
-    - 14 Klein zakel  => zakelijk
-    - 10 Particulier  => particulier
-    - 10 Berijder     => particulier
-    - 00 Prospect     => prospect
-    - 00 Lead         => particulier
-    """
     s = _safe_str(raw).lower()
     if not s:
         return "particulier"
 
-    code = s[:2]  # "14", "10", "00", etc.
+    code = s[:2]
 
     if "zakel" in s or code == "14":
         return "zakelijk"
@@ -67,9 +59,6 @@ def _normalize_klant_type(raw: str) -> str:
 
 
 def _klant_type_sort_key(klant_type: str) -> int:
-    """
-    Sorteer: particulier eerst, dan zakelijk, dan prospect (als laatste).
-    """
     kt = _safe_str(klant_type).lower()
     if kt == "particulier":
         return 0
@@ -88,17 +77,10 @@ def _regio_sort_key(regio) -> int:
 
 
 def _norm_kenteken(k: str) -> str:
-    # licht normaliseren: spaties/streepjes eruit is prima
     return "".join(ch for ch in _safe_str(k).upper() if ch.isalnum())
 
 
 def _is_valid_kenteken(k: str) -> bool:
-    """
-    Simpele, robuuste check:
-    - NL kentekens zijn (na normalisatie) vrijwel altijd 6 tekens (A-Z/0-9)
-    - leeg/te kort/te lang -> ongeldig
-    - alles '0' of alles hetzelfde -> ongeldig (rommel uit Excel)
-    """
     kk = _norm_kenteken(k)
     if not kk:
         return False
@@ -141,16 +123,12 @@ def import_excel(excel_path: str, denylist_path: str | None = None) -> int:
     c_model = col("Model auto", "Model")
     c_type = col("Type model", "Type")
 
-    # klanttype: voorkeur op naam, anders vaste kolom F (index 5)
     c_klanttype = col("Klanttype", "Type klant", "Categorie")
-
-    c_voertuigtype = col("Voertuigtype", "Soort voertuig")  # personenauto/bestelauto
+    c_voertuigtype = col("Voertuigtype", "Soort voertuig")
     c_bouwjaar = col("Bouwjaar", "Jaar")
 
-    # ---------------------------------
-    # 1) Eerst alle rijen normaliseren naar dicts
-    # ---------------------------------
     rows: list[dict] = []
+
     for _, row in df.iterrows():
         klantnaam = _safe_str(row.get(c_klantnaam)) if c_klantnaam else ""
         adres = _safe_str(row.get(c_adres)) if c_adres else ""
@@ -161,7 +139,6 @@ def import_excel(excel_path: str, denylist_path: str | None = None) -> int:
 
         kenteken_raw = _safe_str(row.get(c_kenteken)) if c_kenteken else ""
         kenteken_norm = _norm_kenteken(kenteken_raw)
-        # ✅ BELANGRIJK: ongeldig kenteken -> leeg (no-plate flow)
         kenteken = kenteken_norm if _is_valid_kenteken(kenteken_norm) else ""
 
         merk = _safe_str(row.get(c_merk)) if c_merk else ""
@@ -202,7 +179,7 @@ def import_excel(excel_path: str, denylist_path: str | None = None) -> int:
                 "plaats": plaats,
                 "telefoon": telefoon,
                 "email": email,
-                "kenteken": kenteken,  # ✅ nu leeg als ongeldig
+                "kenteken": kenteken,
                 "merk": merk,
                 "model": model,
                 "type_model": type_model,
@@ -213,9 +190,6 @@ def import_excel(excel_path: str, denylist_path: str | None = None) -> int:
             }
         )
 
-    # ---------------------------------
-    # 2) ✅ SORTERING: particulier/zakelijk + regio bij elkaar
-    # ---------------------------------
     rows.sort(
         key=lambda r: (
             _klant_type_sort_key(r.get("klant_type", "")),
@@ -225,10 +199,8 @@ def import_excel(excel_path: str, denylist_path: str | None = None) -> int:
         )
     )
 
-    # ---------------------------------
-    # 3) Daarna pas inserten in DB
-    # ---------------------------------
     processed = 0
+
     with connect() as conn:
         ensure_offer_counter(conn)
 
@@ -250,10 +222,10 @@ def import_excel(excel_path: str, denylist_path: str | None = None) -> int:
             bouwjaar_val = r["bouwjaar"]
             regio = r["regio"]
 
-            # Denylist check
             is_blocked = 0
             block_reason = None
             block_note = None
+
             for d in deny_entries:
                 if d and klantnaam and d.lower() in klantnaam.lower():
                     is_blocked = 1
@@ -261,10 +233,7 @@ def import_excel(excel_path: str, denylist_path: str | None = None) -> int:
                     block_note = f"Matched: {d}"
                     break
 
-            # ✅ dekking altijd berekenen
             dekking = bepaal_dekking(bouwjaar_val)
-
-            # ✅ benodigde svj volgens rules
             ben_svj = benodigde_svj(klant_type, voertuig_type, regio)
 
             mk = _month_key(today)
@@ -283,26 +252,46 @@ def import_excel(excel_path: str, denylist_path: str | None = None) -> int:
                     bouwjaar, regio, dekking, benodigde_svj,
                     delivery_method, delivery_status,
                     is_blocked, block_reason, block_note,
-                    call_status, decision_status, follow_up_due_at
+                    call_status, decision_status, follow_up_due_at,
+                    mail_template_type
                 ) VALUES (
-                    ?, ?, ?, ?,
-                    ?, ?, ?, ?, ?, ?,
-                    ?, ?, ?, ?,
-                    ?, ?,
-                    ?, ?, ?, ?,
-                    ?, ?,
-                    ?, ?, ?,
-                    'open', 'onbekend', ?
+                    %s, %s, %s, %s,
+                    %s, %s, %s, %s, %s, %s,
+                    %s, %s, %s, %s,
+                    %s, %s,
+                    %s, %s, %s, %s,
+                    %s, %s,
+                    %s, %s, %s,
+                    'open', 'onbekend', %s,
+                    'auto'
                 )
                 """,
                 (
-                    offer_no, created_at, mk, batch,
-                    klantnaam, adres, postcode, plaats, telefoon, email,
-                    kenteken, merk, model, type_model,
-                    klant_type, voertuig_type,
-                    bouwjaar_val, regio, dekking, ben_svj,
-                    delivery_method, delivery_status,
-                    is_blocked, block_reason, block_note,
+                    offer_no,
+                    created_at,
+                    mk,
+                    batch,
+                    klantnaam,
+                    adres,
+                    postcode,
+                    plaats,
+                    telefoon,
+                    email,
+                    kenteken,
+                    merk,
+                    model,
+                    type_model,
+                    klant_type,
+                    voertuig_type,
+                    bouwjaar_val,
+                    regio,
+                    dekking,
+                    ben_svj,
+                    delivery_method,
+                    delivery_status,
+                    is_blocked,
+                    block_reason,
+                    block_note,
                     _followup_due(today),
                 ),
             )
@@ -314,5 +303,14 @@ def import_excel(excel_path: str, denylist_path: str | None = None) -> int:
 
 def get_last_batch_id() -> str | None:
     with connect() as conn:
-        r = conn.execute("SELECT batch_id FROM offers ORDER BY created_at DESC LIMIT 1").fetchone()
+        r = conn.execute(
+            """
+            SELECT batch_id
+            FROM offers
+            WHERE batch_id IS NOT NULL AND batch_id != ''
+            ORDER BY created_at DESC
+            LIMIT 1
+            """
+        ).fetchone()
+
         return r["batch_id"] if r else None

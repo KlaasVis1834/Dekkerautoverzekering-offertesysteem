@@ -1,30 +1,36 @@
 from __future__ import annotations
 
-import sqlite3
+import os
 from pathlib import Path
-from datetime import datetime
+
+import psycopg
+from psycopg.rows import dict_row
 
 PROJECT_ROOT = Path(__file__).resolve().parent
-DB_PATH = PROJECT_ROOT / "data" / "app.db"
+DATABASE_URL = os.environ.get("DATABASE_URL", "").strip()
 
 
-def connect() -> sqlite3.Connection:
-    DB_PATH.parent.mkdir(parents=True, exist_ok=True)
-    conn = sqlite3.connect(DB_PATH)
-    conn.row_factory = sqlite3.Row
-    return conn
+def connect():
+    if not DATABASE_URL:
+        raise RuntimeError("DATABASE_URL ontbreekt. Zet deze in Render Environment Variables.")
+
+    return psycopg.connect(
+        DATABASE_URL,
+        row_factory=dict_row,
+        connect_timeout=15,
+    )
 
 
 def init_db() -> None:
     """
-    (Re)initialiseert de database met alle tabellen.
-    Wordt gebruikt door de UI reset-knop.
+    Initialiseert de Supabase/PostgreSQL database met de basistabellen.
     """
     with connect() as conn:
-        conn.execute("""
+        conn.execute(
+            """
             CREATE TABLE IF NOT EXISTS offers (
                 offer_no TEXT PRIMARY KEY,
-                created_at TEXT DEFAULT (datetime('now')),
+                created_at TEXT,
                 month_key TEXT,
                 batch_id TEXT,
 
@@ -40,16 +46,16 @@ def init_db() -> None:
                 model TEXT,
                 type_model TEXT,
 
-                klant_type TEXT,       -- particulier/prospect/zakelijk
-                voertuig_type TEXT,    -- personenauto/bestelauto
+                klant_type TEXT,
+                voertuig_type TEXT,
 
                 bouwjaar INTEGER,
                 regio INTEGER,
                 dekking TEXT,
                 benodigde_svj INTEGER,
 
-                delivery_method TEXT,  -- email/post
-                delivery_status TEXT,  -- nieuw/email_klaar/post_klaar/...
+                delivery_method TEXT,
+                delivery_status TEXT,
                 offer_pdf_path TEXT,
                 eml_path TEXT,
                 post_letter_path TEXT,
@@ -60,37 +66,66 @@ def init_db() -> None:
 
                 follow_up_due_at TEXT,
                 last_call_at TEXT,
-                call_status TEXT DEFAULT 'open',          -- open/te_bellen/gebeld/niet_bellen
-                decision_status TEXT DEFAULT 'onbekend',   -- onbekend/akkoord/niet_akkoord
-                call_notes TEXT
-            )
-        """)
+                call_status TEXT DEFAULT 'open',
+                decision_status TEXT DEFAULT 'onbekend',
+                call_notes TEXT,
 
-        conn.execute("""
+                maandpremie DOUBLE PRECISION,
+                dienstverlening_bedrag DOUBLE PRECISION,
+                svj_override INTEGER,
+                is_bestaande_klant INTEGER DEFAULT 0,
+
+                revision_of TEXT,
+                revision_no INTEGER DEFAULT 0,
+
+                dekking_override TEXT,
+                extra_svi INTEGER DEFAULT 0,
+                extra_rb INTEGER DEFAULT 0,
+
+                created_by TEXT,
+                updated_by TEXT,
+                updated_at TEXT,
+
+                no_plate_vehicle_id INTEGER,
+                np_gewicht TEXT,
+                np_maandpremie DOUBLE PRECISION,
+                np_cataloguswaarde TEXT,
+                np_cataloguswaarde_part TEXT,
+                np_cataloguswaarde_zak TEXT,
+
+                mail_template_type TEXT DEFAULT 'auto'
+            )
+            """
+        )
+
+        conn.execute(
+            """
             CREATE TABLE IF NOT EXISTS offer_counters (
                 month_key TEXT PRIMARY KEY,
                 last_seq INTEGER NOT NULL
             )
-        """)
+            """
+        )
 
         conn.commit()
 
 
-def ensure_offer_counter(conn: sqlite3.Connection) -> None:
+def ensure_offer_counter(conn) -> None:
     """
     Zorgt dat de offer_counters tabel bestaat.
-    Handig als je scripts direct draait zonder eerst init_db.
     """
-    conn.execute("""
+    conn.execute(
+        """
         CREATE TABLE IF NOT EXISTS offer_counters (
             month_key TEXT PRIMARY KEY,
             last_seq INTEGER NOT NULL
         )
-    """)
+        """
+    )
     conn.commit()
 
 
-def next_offer_no(conn: sqlite3.Connection, month_key: str) -> str:
+def next_offer_no(conn, month_key: str) -> str:
     """
     Genereert offertenummer:
       YYMM-XXX
@@ -99,14 +134,14 @@ def next_offer_no(conn: sqlite3.Connection, month_key: str) -> str:
     ensure_offer_counter(conn)
 
     row = conn.execute(
-        "SELECT last_seq FROM offer_counters WHERE month_key = ?",
+        "SELECT last_seq FROM offer_counters WHERE month_key = %s",
         (month_key,),
     ).fetchone()
 
     if row is None:
         last_seq = 0
         conn.execute(
-            "INSERT INTO offer_counters (month_key, last_seq) VALUES (?, ?)",
+            "INSERT INTO offer_counters (month_key, last_seq) VALUES (%s, %s)",
             (month_key, last_seq),
         )
         conn.commit()
@@ -114,13 +149,13 @@ def next_offer_no(conn: sqlite3.Connection, month_key: str) -> str:
         last_seq = int(row["last_seq"])
 
     new_seq = last_seq + 1
+
     conn.execute(
-        "UPDATE offer_counters SET last_seq = ? WHERE month_key = ?",
+        "UPDATE offer_counters SET last_seq = %s WHERE month_key = %s",
         (new_seq, month_key),
     )
     conn.commit()
 
-    # month_key = "YYYY-MM"
     yy = month_key[2:4]
     mm = month_key[5:7]
     return f"{yy}{mm}-{new_seq:03d}"

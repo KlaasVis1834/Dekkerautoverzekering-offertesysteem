@@ -440,7 +440,30 @@
     </div>
   {% endfor %}
 </div>
+<div style="height:14px"></div>
 
+<div class="card">
+  <div class="row" style="justify-content:space-between;">
+    <div class="muted small">
+      Pagina <b>{{ page }}</b> van <b>{{ total_pages }}</b> —
+      totaal <b>{{ total_rows }}</b> offertes
+    </div>
+
+    <div class="row">
+      {% if has_prev %}
+        <a class="btn" href="{{ url_for('offers', q=q, month=month, delivery=delivery, page=page-1) }}">← Vorige</a>
+      {% else %}
+        <span class="btn" style="opacity:.45; pointer-events:none;">← Vorige</span>
+      {% endif %}
+
+      {% if has_next %}
+        <a class="btn primary" href="{{ url_for('offers', q=q, month=month, delivery=delivery, page=page+1) }}">Volgende →</a>
+      {% else %}
+        <span class="btn" style="opacity:.45; pointer-events:none;">Volgende →</span>
+      {% endif %}
+    </div>
+  </div>
+</div>
 <script>
 async function npSearch(offerNo, q){
   const sel = document.getElementById("np_select_" + offerNo);

@@ -849,80 +849,191 @@ def import_page():
 
 
 @app.route("/offers")
+
 @login_required
+
 def offers():
+
     ensure_db()
 
     q = request.args.get("q", "").strip()
+
     month = request.args.get("month", "").strip()
+
     delivery = request.args.get("delivery", "").strip()
 
+    try:
+
+        page = int(request.args.get("page", "1"))
+
+    except Exception:
+
+        page = 1
+
+    if page < 1:
+
+        page = 1
+
+    per_page = 50
+
+    offset = (page - 1) * per_page
+
     sql = """
+
     SELECT offer_no, created_at, month_key, batch_id,
+
            klantnaam, klant_type, email, telefoon,
+
            kenteken, merk, model, type_model, voertuig_type, bouwjaar,
+
            regio, dekking,
+
            delivery_method, delivery_status, offer_pdf_path, eml_path, post_letter_path,
+
            is_blocked, block_reason, block_note,
+
            follow_up_due_at, call_status, decision_status,
+
            maandpremie, dienstverlening_bedrag,
+
            svj_override, is_bestaande_klant,
+
            revision_of, revision_no,
+
            no_plate_vehicle_id, np_gewicht, np_maandpremie,
+
            np_cataloguswaarde, np_cataloguswaarde_part, np_cataloguswaarde_zak,
+
            created_by, updated_by, updated_at, mail_template_type
+
     FROM offers
+
     WHERE 1=1
+
     """
+
     params = []
 
+    count_sql = "SELECT COUNT(*) AS c FROM offers WHERE 1=1"
+
+    count_params = []
+
     if month:
+
         sql += " AND month_key = %s"
+
+        count_sql += " AND month_key = %s"
+
         params.append(month)
 
+        count_params.append(month)
+
     if q:
+
         sql += " AND (klantnaam ILIKE %s OR kenteken ILIKE %s OR email ILIKE %s OR offer_no ILIKE %s)"
+
+        count_sql += " AND (klantnaam ILIKE %s OR kenteken ILIKE %s OR email ILIKE %s OR offer_no ILIKE %s)"
+
         like = f"%{q}%"
+
         params.extend([like, like, like, like])
 
+        count_params.extend([like, like, like, like])
+
     if delivery and delivery != "all":
+
         if delivery == "geblokkeerd":
+
             sql += " AND is_blocked = 1"
+
+            count_sql += " AND is_blocked = 1"
+
         else:
+
             sql += " AND is_blocked = 0 AND delivery_status = %s"
+
+            count_sql += " AND is_blocked = 0 AND delivery_status = %s"
+
             params.append(delivery)
 
+            count_params.append(delivery)
+
     sql += """
+
     ORDER BY
+
         CASE
+
             WHEN COALESCE(offer_pdf_path,'')='' AND COALESCE(eml_path,'')='' AND COALESCE(post_letter_path,'')=''
+
             THEN 0 ELSE 1
+
         END ASC,
+
         CASE WHEN lower(COALESCE(klant_type,''))='zakelijk' THEN 1 ELSE 0 END ASC,
+
         COALESCE(regio, 999) ASC,
+
         created_at DESC,
+
         offer_no DESC
-    LIMIT 100
+
+    LIMIT %s OFFSET %s
+
     """
 
+    params.extend([per_page, offset])
+
     with connect() as conn:
+
         rows = conn.execute(sql, tuple(params)).fetchall()
+
+        total_rows = conn.execute(count_sql, tuple(count_params)).fetchone()["c"]
+
         months = conn.execute(
+
             """
+
             SELECT DISTINCT month_key FROM offers
+
             WHERE month_key IS NOT NULL AND month_key != ''
+
             ORDER BY month_key DESC
+
             LIMIT 24
+
             """
+
         ).fetchall()
 
+    total_pages = max(1, (total_rows + per_page - 1) // per_page)
+
     return render_template(
+
         "offers.html",
+
         rows=rows,
+
         q=q,
+
         month=month,
+
         delivery=delivery or "all",
+
         months=[r["month_key"] for r in months],
+
+        page=page,
+
+        per_page=per_page,
+
+        total_rows=total_rows,
+
+        total_pages=total_pages,
+
+        has_prev=page > 1,
+
+        has_next=page < total_pages,
+
     )
 
 

@@ -47,7 +47,7 @@ from mailgen import (
     guess_aanhef_en_achternaam,
 )  # noqa
 
-AANVRAAG_LINK = "https://www.klaasvis.online/aanvraagformulier/"
+AANVRAAG_LINK = "https://www.klaasvis.nl/aanvraagformulier/"
 
 app = Flask(__name__)
 app.secret_key = os.environ.get("SECRET_KEY", "dekker-offertesysteem-local")

@@ -72,7 +72,6 @@ MICROSOFT_SCOPES = [
 
     "User.Read",
     "Mail.ReadWrite",
-    "offline_access",
 ]
 
 DB_READY = False

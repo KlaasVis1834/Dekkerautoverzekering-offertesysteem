@@ -2048,7 +2048,7 @@ def _build_pdf_and_delivery(conn, r, now: datetime):
             filename_base=_offer_pdf_filename_base(r["klantnaam"] or "", klant_type, offer_no),
         )
 
-        if email:
+            if email:
         template = _choose_mail_template(
             klant_type=klant_type,
             is_bestaande_klant=is_bestaande_klant,
@@ -2067,25 +2067,11 @@ def _build_pdf_and_delivery(conn, r, now: datetime):
             aanhefregel = "Geachte heer/mevrouw,"
         else:
             aanhef, achternaam = guess_aanhef_en_achternaam(r["klantnaam"] or "")
-            aanhefregel = (
-                f"Geachte {aanhef} {achternaam},"
-                if achternaam
-                else f"Geachte {aanhef},"
-            )
+            aanhefregel = f"Geachte {aanhef} {achternaam}," if achternaam else f"Geachte {aanhef},"
 
-        auto_show = (
-            " ".join(
-                [
-                    x
-                    for x in [
-                        (r["merk"] or "").strip(),
-                        (r["model"] or "").strip(),
-                    ]
-                    if x
-                ]
-            ).strip()
-            or "auto"
-        )
+        auto_show = " ".join(
+            [x for x in [(r["merk"] or "").strip(), (r["model"] or "").strip()] if x]
+        ).strip() or "auto"
 
         body = render_mail_template(
             template,
@@ -2101,11 +2087,7 @@ def _build_pdf_and_delivery(conn, r, now: datetime):
             },
         )
 
-        subject = _subject_for_offer(
-            klant_type,
-            revision_no,
-            offer_no,
-        )
+        subject = _subject_for_offer(klant_type, revision_no, offer_no)
 
         graph_info = None
         graph_error = ""
@@ -2150,7 +2132,6 @@ def _build_pdf_and_delivery(conn, r, now: datetime):
                 "graph": graph_info,
             }
 
-        # Fallback naar MSG-bestand
         msg_path = write_msg_outlook(
             out_base_dir="data/outbox",
             dt=now,
@@ -2192,19 +2173,9 @@ def _build_pdf_and_delivery(conn, r, now: datetime):
             "msg": msg_path,
         }
 
-    auto_show = (
-        " ".join(
-            [
-                x
-                for x in [
-                    (r["merk"] or "").strip(),
-                    (r["model"] or "").strip(),
-                ]
-                if x
-            ]
-        ).strip()
-        or "auto"
-    )
+    auto_show = " ".join(
+        [x for x in [(r["merk"] or "").strip(), (r["model"] or "").strip()] if x]
+    ).strip() or "auto"
 
     post_letter_path = generate_post_letter_pdf(
         out_base_dir="data/post",
@@ -2245,43 +2216,6 @@ def _build_pdf_and_delivery(conn, r, now: datetime):
         "pdf": offer_pdf_path,
         "post": post_letter_path,
     }
-    auto_show = " ".join([x for x in [(r["merk"] or "").strip(), (r["model"] or "").strip()] if x]).strip() or "auto"
-
-    post_letter_path = generate_post_letter_pdf(
-        out_base_dir="data/post",
-        dt=now,
-        offer_no=offer_no,
-        klantnaam=r["klantnaam"] or "",
-        adres=r["adres"] or "",
-        postcode=r["postcode"] or "",
-        plaats=r["plaats"] or "",
-        auto=auto_show,
-        behandeld_door="Dirk Slootweg",
-    )
-
-    _execute_retry(
-        conn,
-        """
-        UPDATE offers
-        SET offer_pdf_path = %s,
-            post_letter_path = %s,
-            eml_path = NULL,
-            delivery_method = 'post',
-            delivery_status = 'post_klaar',
-            updated_by = %s,
-            updated_at = %s
-        WHERE offer_no = %s
-        """,
-        (
-            offer_pdf_path,
-            post_letter_path,
-            current_user_display(),
-            datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-            offer_no,
-        ),
-    )
-    return {"kind": "post", "pdf": offer_pdf_path, "post": post_letter_path}
-
 
 @app.post("/export-last-batch")
 @login_required

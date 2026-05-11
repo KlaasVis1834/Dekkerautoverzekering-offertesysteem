@@ -54,6 +54,38 @@ app.secret_key = os.environ.get("SECRET_KEY", "dekker-offertesysteem-local")
 DATABASE_URL = os.environ.get("DATABASE_URL", "").strip()
 LOCAL_SQLITE_DB_PATH = PROJECT_ROOT / "data" / "app.db"
 
+MICROSOFT_CLIENT_ID = os.environ.get("MICROSOFT_CLIENT_ID", "").strip()
+
+MICROSOFT_TENANT_ID = os.environ.get("MICROSOFT_TENANT_ID", "").strip()
+
+MICROSOFT_CLIENT_SECRET = os.environ.get("MICROSOFT_CLIENT_SECRET", "").strip()
+
+MICROSOFT_REDIRECT_URI = os.environ.get("MICROSOFT_REDIRECT_URI", "").strip()
+
+MICROSOFT_AUTHORITY = (
+
+    f"https://login.microsoftonline.com/{MICROSOFT_TENANT_ID}"
+
+    if MICROSOFT_TENANT_ID
+
+    else ""
+
+)
+
+MICROSOFT_SCOPES = [
+
+    "User.Read",
+
+    "Mail.ReadWrite",
+
+    "offline_access",
+
+]
+
+DB_READY = False
+
+DB_POOL = None
+
 DB_READY = False
 DB_POOL = None
 

@@ -14,15 +14,18 @@
       display: flex;
       align-items: center;
       justify-content: center;
+      padding: 18px;
+      box-sizing: border-box;
     }
 
     .account-box {
       width: 100%;
-      max-width: 430px;
+      max-width: 460px;
       background: #fff;
       padding: 32px;
       border-radius: 16px;
       box-shadow: 0 18px 45px rgba(17, 24, 39, 0.12);
+      box-sizing: border-box;
     }
 
     h1 {
@@ -30,9 +33,20 @@
       font-size: 24px;
     }
 
+    h2 {
+      margin: 26px 0 8px;
+      font-size: 18px;
+    }
+
     p {
       margin: 0 0 24px;
       color: #667085;
+      line-height: 1.5;
+    }
+
+    .small {
+      font-size: 13px;
+      margin-bottom: 14px;
     }
 
     label {
@@ -51,7 +65,7 @@
       box-sizing: border-box;
     }
 
-    button, .back-link {
+    button, .button-link, .back-link {
       width: 100%;
       display: block;
       text-align: center;
@@ -65,10 +79,18 @@
       font-size: 16px;
       text-decoration: none;
       box-sizing: border-box;
+      margin-top: 10px;
+    }
+
+    .button-link {
+      background: #2563eb;
+    }
+
+    .disconnect-button {
+      background: #b91c1c;
     }
 
     .back-link {
-      margin-top: 12px;
       background: #475569;
     }
 
@@ -87,10 +109,43 @@
       background: #fee2e2;
       color: #991b1b;
     }
+
+    .outlook-box {
+      padding: 14px;
+      border: 1px solid #dbe3ef;
+      border-radius: 12px;
+      background: #f8fafc;
+      margin-bottom: 18px;
+    }
+
+    .status {
+      display: inline-block;
+      padding: 6px 10px;
+      border-radius: 999px;
+      font-size: 13px;
+      font-weight: 700;
+      margin-bottom: 10px;
+    }
+
+    .status.connected {
+      background: #dcfce7;
+      color: #166534;
+    }
+
+    .status.not-connected {
+      background: #fee2e2;
+      color: #991b1b;
+    }
+
+    hr {
+      border: 0;
+      border-top: 1px solid #e5e7eb;
+      margin: 24px 0;
+    }
   </style>
 </head>
 <body>
-  <form class="account-box" method="post">
+  <div class="account-box">
     <h1>Mijn account</h1>
     <p>
       Ingelogd als:
@@ -105,18 +160,54 @@
       {% endif %}
     {% endwith %}
 
-    <label>Huidig wachtwoord</label>
-    <input type="password" name="current_password" required>
+    <h2>Outlook koppeling</h2>
 
-    <label>Nieuw wachtwoord</label>
-    <input type="password" name="new_password" required>
+    <div class="outlook-box">
+      {% if ms_graph_email %}
+        <span class="status connected">Outlook gekoppeld</span>
+        <p class="small">
+          Gekoppeld account:<br>
+          <strong>{{ ms_graph_email }}</strong>
+        </p>
 
-    <label>Herhaal nieuw wachtwoord</label>
-    <input type="password" name="confirm_password" required>
+        {% if ms_graph_connected_at %}
+          <p class="small">
+            Gekoppeld op:<br>
+            <strong>{{ ms_graph_connected_at }}</strong>
+          </p>
+        {% endif %}
 
-    <button type="submit">Wachtwoord wijzigen</button>
+        <form method="post" action="{{ url_for('microsoft_disconnect') }}">
+          <button class="disconnect-button" type="submit">Outlook koppeling verwijderen</button>
+        </form>
+      {% else %}
+        <span class="status not-connected">Outlook niet gekoppeld</span>
+        <p class="small">
+          Koppel je Microsoft 365-account om later automatisch conceptmails in Outlook Concepten te laten klaarzetten.
+        </p>
+
+        <a class="button-link" href="{{ url_for('microsoft_connect') }}">Microsoft Outlook koppelen</a>
+      {% endif %}
+    </div>
+
+    <hr>
+
+    <h2>Wachtwoord wijzigen</h2>
+
+    <form method="post">
+      <label>Huidig wachtwoord</label>
+      <input type="password" name="current_password" required>
+
+      <label>Nieuw wachtwoord</label>
+      <input type="password" name="new_password" required>
+
+      <label>Herhaal nieuw wachtwoord</label>
+      <input type="password" name="confirm_password" required>
+
+      <button type="submit">Wachtwoord wijzigen</button>
+    </form>
 
     <a href="{{ url_for('dashboard') }}" class="back-link">Terug naar dashboard</a>
-  </form>
+  </div>
 </body>
 </html>

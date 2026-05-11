@@ -55,13 +55,9 @@ DATABASE_URL = os.environ.get("DATABASE_URL", "").strip()
 LOCAL_SQLITE_DB_PATH = PROJECT_ROOT / "data" / "app.db"
 
 MICROSOFT_CLIENT_ID = os.environ.get("MICROSOFT_CLIENT_ID", "").strip()
-
 MICROSOFT_TENANT_ID = os.environ.get("MICROSOFT_TENANT_ID", "").strip()
-
 MICROSOFT_CLIENT_SECRET = os.environ.get("MICROSOFT_CLIENT_SECRET", "").strip()
-
 MICROSOFT_REDIRECT_URI = os.environ.get("MICROSOFT_REDIRECT_URI", "").strip()
-
 MICROSOFT_AUTHORITY = (
 
     f"https://login.microsoftonline.com/{MICROSOFT_TENANT_ID}"
@@ -75,19 +71,13 @@ MICROSOFT_AUTHORITY = (
 MICROSOFT_SCOPES = [
 
     "User.Read",
-
     "Mail.ReadWrite",
-
     "offline_access",
-
 ]
 
 DB_READY = False
-
 DB_POOL = None
 
-DB_READY = False
-DB_POOL = None
 
 
 # -----------------------------
@@ -365,14 +355,10 @@ def ensure_db():
         _ensure_column(conn, "users", "active", "INTEGER DEFAULT 1")
         _ensure_column(conn, "users", "last_login_at", "TEXT")
         _ensure_column(conn, "users", "ms_graph_email", "TEXT")
-
-_ensure_column(conn, "users", "ms_graph_access_token", "TEXT")
-
-_ensure_column(conn, "users", "ms_graph_refresh_token", "TEXT")
-
-_ensure_column(conn, "users", "ms_graph_token_expires_at", "TEXT")
-
-_ensure_column(conn, "users", "ms_graph_connected_at", "TEXT")
+        _ensure_column(conn, "users", "ms_graph_access_token", "TEXT")
+        _ensure_column(conn, "users", "ms_graph_refresh_token", "TEXT")
+        _ensure_column(conn, "users", "ms_graph_token_expires_at", "TEXT")
+        _ensure_column(conn, "users", "ms_graph_connected_at", "TEXT")
         seed_default_users(conn)
         conn.commit()
 
@@ -460,34 +446,41 @@ def account():
                 (username,),
             ).fetchone()
 
-            if not user or not check_password_hash(user["password_hash"], current_password):
+            if not user or not check_password_hash(
+                user["password_hash"],
+                current_password
+            ):
                 flash("Huidig wachtwoord klopt niet.", "error")
                 return redirect(url_for("account"))
 
             conn.execute(
                 "UPDATE users SET password_hash = %s WHERE id = %s",
-                (generate_password_hash(new_password), user["id"]),
+                (
+                    generate_password_hash(new_password),
+                    user["id"],
+                ),
             )
             conn.commit()
 
         flash("Wachtwoord succesvol gewijzigd.", "ok")
         return redirect(url_for("account"))
 
-with connect() as conn:
-    user = conn.execute(
-        """
-        SELECT ms_graph_email, ms_graph_connected_at
-        FROM users
-        WHERE id = %s
-        """,
-        (session.get("user_id"),),
-    ).fetchone()
+    # Outlook gegevens ophalen
+    with connect() as conn:
+        user = conn.execute(
+            """
+            SELECT ms_graph_email, ms_graph_connected_at
+            FROM users
+            WHERE id = %s
+            """,
+            (session.get("user_id"),),
+        ).fetchone()
 
-return render_template(
-    "account.html",
-    ms_graph_email=user["ms_graph_email"] if user else None,
-    ms_graph_connected_at=user["ms_graph_connected_at"] if user else None,
-)
+    return render_template(
+        "account.html",
+        ms_graph_email=user["ms_graph_email"] if user else None,
+        ms_graph_connected_at=user["ms_graph_connected_at"] if user else None,
+    )
 
 @app.route("/account/microsoft/connect")
 @login_required

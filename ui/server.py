@@ -475,7 +475,145 @@ def account():
 
     return render_template("account.html")
 
+@app.route("/account/microsoft/connect")
+@login_required
+def microsoft_connect():
+    ensure_db()
 
+    if not MICROSOFT_CLIENT_ID or not MICROSOFT_CLIENT_SECRET or not MICROSOFT_TENANT_ID or not MICROSOFT_REDIRECT_URI:
+        flash("Microsoft Graph is nog niet volledig ingesteld in Render.", "error")
+        return redirect(url_for("account"))
+
+    state = secrets.token_urlsafe(24)
+    session["ms_oauth_state"] = state
+
+    app_msal = msal.ConfidentialClientApplication(
+        MICROSOFT_CLIENT_ID,
+        authority=MICROSOFT_AUTHORITY,
+        client_credential=MICROSOFT_CLIENT_SECRET,
+    )
+
+    auth_url = app_msal.get_authorization_request_url(
+        scopes=MICROSOFT_SCOPES,
+        state=state,
+        redirect_uri=MICROSOFT_REDIRECT_URI,
+        prompt="select_account",
+    )
+
+    return redirect(auth_url)
+
+
+@app.route("/auth/microsoft/callback")
+@login_required
+def microsoft_callback():
+    ensure_db()
+
+    expected_state = session.get("ms_oauth_state")
+    received_state = request.args.get("state")
+
+    if not expected_state or expected_state != received_state:
+        flash("Microsoft koppeling mislukt: ongeldige sessie.", "error")
+        return redirect(url_for("account"))
+
+    error = request.args.get("error")
+    if error:
+        flash(f"Microsoft koppeling geannuleerd of mislukt: {error}", "error")
+        return redirect(url_for("account"))
+
+    code = request.args.get("code")
+    if not code:
+        flash("Microsoft koppeling mislukt: geen code ontvangen.", "error")
+        return redirect(url_for("account"))
+
+    app_msal = msal.ConfidentialClientApplication(
+        MICROSOFT_CLIENT_ID,
+        authority=MICROSOFT_AUTHORITY,
+        client_credential=MICROSOFT_CLIENT_SECRET,
+    )
+
+    result = app_msal.acquire_token_by_authorization_code(
+        code,
+        scopes=MICROSOFT_SCOPES,
+        redirect_uri=MICROSOFT_REDIRECT_URI,
+    )
+
+    if "access_token" not in result:
+        msg = result.get("error_description") or result.get("error") or "geen toegangstoken ontvangen"
+        flash(f"Microsoft koppeling mislukt: {msg}", "error")
+        return redirect(url_for("account"))
+
+    access_token = result.get("access_token")
+    refresh_token = result.get("refresh_token")
+    expires_in = int(result.get("expires_in", 3600))
+
+    expires_at = datetime.fromtimestamp(
+        datetime.now().timestamp() + expires_in
+    ).strftime("%Y-%m-%d %H:%M:%S")
+
+    profile_res = requests.get(
+        "https://graph.microsoft.com/v1.0/me",
+        headers={"Authorization": f"Bearer {access_token}"},
+        timeout=20,
+    )
+
+    if profile_res.status_code >= 400:
+        flash("Microsoft account gekoppeld, maar profiel ophalen is mislukt.", "error")
+        return redirect(url_for("account"))
+
+    profile = profile_res.json()
+    graph_email = profile.get("mail") or profile.get("userPrincipalName") or ""
+
+    with connect() as conn:
+        conn.execute(
+            """
+            UPDATE users
+            SET ms_graph_email = %s,
+                ms_graph_access_token = %s,
+                ms_graph_refresh_token = %s,
+                ms_graph_token_expires_at = %s,
+                ms_graph_connected_at = %s
+            WHERE id = %s
+            """,
+            (
+                graph_email,
+                access_token,
+                refresh_token,
+                expires_at,
+                datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                session.get("user_id"),
+            ),
+        )
+        conn.commit()
+
+    session.pop("ms_oauth_state", None)
+
+    flash(f"Microsoft Outlook gekoppeld: {graph_email}", "ok")
+    return redirect(url_for("account"))
+
+
+@app.post("/account/microsoft/disconnect")
+@login_required
+def microsoft_disconnect():
+    ensure_db()
+
+    with connect() as conn:
+        conn.execute(
+            """
+            UPDATE users
+            SET ms_graph_email = NULL,
+                ms_graph_access_token = NULL,
+                ms_graph_refresh_token = NULL,
+                ms_graph_token_expires_at = NULL,
+                ms_graph_connected_at = NULL
+            WHERE id = %s
+            """,
+            (session.get("user_id"),),
+        )
+        conn.commit()
+
+    flash("Microsoft Outlook koppeling verwijderd.", "ok")
+    return redirect(url_for("account"))
+    
 @app.route("/admin/users")
 @admin_required
 def admin_users():

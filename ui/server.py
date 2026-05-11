@@ -490,23 +490,21 @@ def microsoft_connect():
         flash("Microsoft Graph is nog niet volledig ingesteld in Render.", "error")
         return redirect(url_for("account"))
 
-    state = secrets.token_urlsafe(24)
-    session["ms_oauth_state"] = state
-
     app_msal = msal.ConfidentialClientApplication(
         MICROSOFT_CLIENT_ID,
         authority=MICROSOFT_AUTHORITY,
         client_credential=MICROSOFT_CLIENT_SECRET,
     )
 
-    auth_url = app_msal.get_authorization_request_url(
+    flow = app_msal.initiate_auth_code_flow(
         scopes=MICROSOFT_SCOPES,
-        state=state,
         redirect_uri=MICROSOFT_REDIRECT_URI,
         prompt="select_account",
     )
 
-    return redirect(auth_url)
+    session["ms_auth_flow"] = flow
+
+    return redirect(flow["auth_uri"])
 
 
 @app.route("/auth/microsoft/callback")
@@ -514,21 +512,9 @@ def microsoft_connect():
 def microsoft_callback():
     ensure_db()
 
-    expected_state = session.get("ms_oauth_state")
-    received_state = request.args.get("state")
-
-    if not expected_state or expected_state != received_state:
-        flash("Microsoft koppeling mislukt: ongeldige sessie.", "error")
-        return redirect(url_for("account"))
-
-    error = request.args.get("error")
-    if error:
-        flash(f"Microsoft koppeling geannuleerd of mislukt: {error}", "error")
-        return redirect(url_for("account"))
-
-    code = request.args.get("code")
-    if not code:
-        flash("Microsoft koppeling mislukt: geen code ontvangen.", "error")
+    flow = session.get("ms_auth_flow")
+    if not flow:
+        flash("Microsoft koppeling mislukt: sessie verlopen. Probeer opnieuw.", "error")
         return redirect(url_for("account"))
 
     app_msal = msal.ConfidentialClientApplication(
@@ -537,10 +523,9 @@ def microsoft_callback():
         client_credential=MICROSOFT_CLIENT_SECRET,
     )
 
-    result = app_msal.acquire_token_by_authorization_code(
-        code,
-        scopes=MICROSOFT_SCOPES,
-        redirect_uri=MICROSOFT_REDIRECT_URI,
+    result = app_msal.acquire_token_by_auth_code_flow(
+        flow,
+        dict(request.args),
     )
 
     if "access_token" not in result:
@@ -591,7 +576,7 @@ def microsoft_callback():
         )
         conn.commit()
 
-    session.pop("ms_oauth_state", None)
+    session.pop("ms_auth_flow", None)
 
     flash(f"Microsoft Outlook gekoppeld: {graph_email}", "ok")
     return redirect(url_for("account"))
@@ -616,6 +601,8 @@ def microsoft_disconnect():
             (session.get("user_id"),),
         )
         conn.commit()
+
+    session.pop("ms_auth_flow", None)
 
     flash("Microsoft Outlook koppeling verwijderd.", "ok")
     return redirect(url_for("account"))

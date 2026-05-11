@@ -364,7 +364,15 @@ def ensure_db():
 
         _ensure_column(conn, "users", "active", "INTEGER DEFAULT 1")
         _ensure_column(conn, "users", "last_login_at", "TEXT")
+        _ensure_column(conn, "users", "ms_graph_email", "TEXT")
 
+_ensure_column(conn, "users", "ms_graph_access_token", "TEXT")
+
+_ensure_column(conn, "users", "ms_graph_refresh_token", "TEXT")
+
+_ensure_column(conn, "users", "ms_graph_token_expires_at", "TEXT")
+
+_ensure_column(conn, "users", "ms_graph_connected_at", "TEXT")
         seed_default_users(conn)
         conn.commit()
 

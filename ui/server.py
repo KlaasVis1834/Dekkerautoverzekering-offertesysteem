@@ -473,7 +473,21 @@ def account():
         flash("Wachtwoord succesvol gewijzigd.", "ok")
         return redirect(url_for("account"))
 
-    return render_template("account.html")
+with connect() as conn:
+    user = conn.execute(
+        """
+        SELECT ms_graph_email, ms_graph_connected_at
+        FROM users
+        WHERE id = %s
+        """,
+        (session.get("user_id"),),
+    ).fetchone()
+
+return render_template(
+    "account.html",
+    ms_graph_email=user["ms_graph_email"] if user else None,
+    ms_graph_connected_at=user["ms_graph_connected_at"] if user else None,
+)
 
 @app.route("/account/microsoft/connect")
 @login_required

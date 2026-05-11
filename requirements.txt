@@ -10,3 +10,5 @@ requests
 werkzeug
 psycopg[binary]
 psycopg-pool
+msal
+requests

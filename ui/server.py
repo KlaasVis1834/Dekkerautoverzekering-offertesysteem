@@ -8,6 +8,7 @@ from pathlib import Path
 import secrets
 import requests
 import msal
+import base64
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 if str(PROJECT_ROOT) not in sys.path:
@@ -1681,7 +1682,146 @@ def set_no_plate_for_offer(offer_no: str):
     flash(f"No-plate voertuig gekoppeld aan {offer_no}.", "ok")
     return redirect(next_url)
 
+# -----------------------------
+# Microsoft Graph helpers
+# -----------------------------
+def _get_current_user_graph_tokens(conn):
+    user_id = session.get("user_id")
+    if not user_id:
+        return None
 
+    return conn.execute(
+        """
+        SELECT id, ms_graph_email, ms_graph_access_token,
+               ms_graph_refresh_token, ms_graph_token_expires_at
+        FROM users
+        WHERE id = %s
+        """,
+        (user_id,),
+    ).fetchone()
+
+
+def _refresh_graph_token_if_needed(conn, user):
+    if not user:
+        return None
+
+    refresh_token = user.get("ms_graph_refresh_token")
+    access_token = user.get("ms_graph_access_token")
+
+    if access_token:
+        return access_token
+
+    if not refresh_token:
+        return None
+
+    app_msal = msal.ConfidentialClientApplication(
+        MICROSOFT_CLIENT_ID,
+        authority=MICROSOFT_AUTHORITY,
+        client_credential=MICROSOFT_CLIENT_SECRET,
+    )
+
+    result = app_msal.acquire_token_by_refresh_token(
+        refresh_token,
+        scopes=MICROSOFT_SCOPES,
+    )
+
+    if "access_token" not in result:
+        return None
+
+    new_access_token = result.get("access_token")
+    new_refresh_token = result.get("refresh_token") or refresh_token
+    expires_in = int(result.get("expires_in", 3600))
+
+    expires_at = datetime.fromtimestamp(
+        datetime.now().timestamp() + expires_in
+    ).strftime("%Y-%m-%d %H:%M:%S")
+
+    conn.execute(
+        """
+        UPDATE users
+        SET ms_graph_access_token = %s,
+            ms_graph_refresh_token = %s,
+            ms_graph_token_expires_at = %s
+        WHERE id = %s
+        """,
+        (
+            new_access_token,
+            new_refresh_token,
+            expires_at,
+            user["id"],
+        ),
+    )
+
+    return new_access_token
+
+
+def create_outlook_draft_with_attachment(conn, to_addr, subject, body_html, pdf_path):
+    user = _get_current_user_graph_tokens(conn)
+    access_token = _refresh_graph_token_if_needed(conn, user)
+
+    if not access_token:
+        return None
+
+    message_payload = {
+        "subject": subject,
+        "body": {
+            "contentType": "HTML",
+            "content": body_html,
+        },
+        "toRecipients": [
+            {
+                "emailAddress": {
+                    "address": to_addr,
+                }
+            }
+        ],
+    }
+
+    create_res = requests.post(
+        "https://graph.microsoft.com/v1.0/me/messages",
+        headers={
+            "Authorization": f"Bearer {access_token}",
+            "Content-Type": "application/json",
+        },
+        json=message_payload,
+        timeout=30,
+    )
+
+    if create_res.status_code >= 400:
+        raise RuntimeError(f"Graph concept aanmaken mislukt: {create_res.text}")
+
+    message = create_res.json()
+    message_id = message.get("id")
+
+    abs_pdf = (PROJECT_ROOT / pdf_path).resolve()
+    if not abs_pdf.exists():
+        raise RuntimeError("PDF-bestand niet gevonden voor Outlook-concept.")
+
+    pdf_bytes = abs_pdf.read_bytes()
+    attachment_payload = {
+        "@odata.type": "#microsoft.graph.fileAttachment",
+        "name": abs_pdf.name,
+        "contentType": "application/pdf",
+        "contentBytes": base64.b64encode(pdf_bytes).decode("ascii"),
+    }
+
+    attach_res = requests.post(
+        f"https://graph.microsoft.com/v1.0/me/messages/{message_id}/attachments",
+        headers={
+            "Authorization": f"Bearer {access_token}",
+            "Content-Type": "application/json",
+        },
+        json=attachment_payload,
+        timeout=30,
+    )
+
+    if attach_res.status_code >= 400:
+        raise RuntimeError(f"Graph bijlage toevoegen mislukt: {attach_res.text}")
+
+    return {
+        "message_id": message_id,
+        "graph_email": user["ms_graph_email"] if user else "",
+    }
 # -----------------------------
 # Export helpers
 # -----------------------------
@@ -1947,38 +2087,84 @@ def _build_pdf_and_delivery(conn, r, now: datetime):
 
         subject = _subject_for_offer(klant_type, revision_no, offer_no)
 
-        msg_path = write_msg_outlook(
-            out_base_dir="data/outbox",
-            dt=now,
-            offer_no=offer_no,
-            to_addr=email,
-            subject=subject,
-            body_text=body,
-            pdf_path=offer_pdf_path,
-        )
+graph_info = None
+graph_error = ""
 
-        _execute_retry(
-            conn,
-            """
-            UPDATE offers
-            SET offer_pdf_path = %s,
-                eml_path = %s,
-                post_letter_path = NULL,
-                delivery_method = 'email',
-                delivery_status = 'email_klaar',
-                updated_by = %s,
-                updated_at = %s
-            WHERE offer_no = %s
-            """,
-            (
-                offer_pdf_path,
-                msg_path,
-                current_user_display(),
-                datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                offer_no,
-            ),
-        )
-        return {"kind": "email", "pdf": offer_pdf_path, "msg": msg_path}
+try:
+    graph_info = create_outlook_draft_with_attachment(
+        conn=conn,
+        to_addr=email,
+        subject=subject,
+        body_html=body,
+        pdf_path=offer_pdf_path,
+    )
+except Exception as e:
+    graph_error = str(e)
+
+if graph_info:
+    _execute_retry(
+        conn,
+        """
+        UPDATE offers
+        SET offer_pdf_path = %s,
+            eml_path = NULL,
+            post_letter_path = NULL,
+            delivery_method = 'email',
+            delivery_status = 'outlook_concept_klaar',
+            updated_by = %s,
+            updated_at = %s
+        WHERE offer_no = %s
+        """,
+        (
+            offer_pdf_path,
+            current_user_display(),
+            datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            offer_no,
+        ),
+    )
+    return {
+        "kind": "email",
+        "pdf": offer_pdf_path,
+        "msg": None,
+        "graph": graph_info,
+    }
+
+msg_path = write_msg_outlook(
+    out_base_dir="data/outbox",
+    dt=now,
+    offer_no=offer_no,
+    to_addr=email,
+    subject=subject,
+    body_text=body,
+    pdf_path=offer_pdf_path,
+)
+
+_execute_retry(
+    conn,
+    """
+    UPDATE offers
+    SET offer_pdf_path = %s,
+        eml_path = %s,
+        post_letter_path = NULL,
+        delivery_method = 'email',
+        delivery_status = 'email_klaar',
+        updated_by = %s,
+        updated_at = %s
+    WHERE offer_no = %s
+    """,
+    (
+        offer_pdf_path,
+        msg_path,
+        current_user_display(),
+        datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        offer_no,
+    ),
+)
+
+if graph_error:
+    print("Outlook concept maken mislukt, MSG fallback gebruikt:", graph_error)
+
+return {"kind": "email", "pdf": offer_pdf_path, "msg": msg_path}
 
     auto_show = " ".join([x for x in [(r["merk"] or "").strip(), (r["model"] or "").strip()] if x]).strip() or "auto"
 

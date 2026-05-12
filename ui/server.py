@@ -1521,12 +1521,21 @@ def _refresh_graph_token_if_needed(conn, user):
 
     refresh_token = user.get("ms_graph_refresh_token")
     access_token = user.get("ms_graph_access_token")
+    expires_raw = user.get("ms_graph_token_expires_at")
 
-    if access_token:
+    token_is_valid = False
+    if access_token and expires_raw:
+        try:
+            expires_at = datetime.strptime(expires_raw, "%Y-%m-%d %H:%M:%S")
+            token_is_valid = expires_at.timestamp() > (datetime.now().timestamp() + 300)
+        except Exception:
+            token_is_valid = False
+
+    if access_token and token_is_valid:
         return access_token
 
     if not refresh_token:
-        return None
+        return access_token if access_token and not expires_raw else None
 
     app_msal = msal.ConfidentialClientApplication(
         MICROSOFT_CLIENT_ID,
@@ -1545,7 +1554,6 @@ def _refresh_graph_token_if_needed(conn, user):
     new_access_token = result.get("access_token")
     new_refresh_token = result.get("refresh_token") or refresh_token
     expires_in = int(result.get("expires_in", 3600))
-
     expires_at = datetime.fromtimestamp(datetime.now().timestamp() + expires_in).strftime("%Y-%m-%d %H:%M:%S")
 
     conn.execute(

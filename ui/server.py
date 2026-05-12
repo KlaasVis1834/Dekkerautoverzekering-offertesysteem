@@ -1299,43 +1299,42 @@ def no_plate():
         catalogus_zak = (request.form.get("cataloguswaarde_zak") or "").strip()
         catalogus_legacy = (request.form.get("cataloguswaarde") or "").strip()
 
-        # ---------------------------------------------------------
-# RDW schatting voor voertuigen zonder kenteken
-# ---------------------------------------------------------
-try:
-    rdw_data = estimate_vehicle_data_from_rdw(
-        merk=merk,
-        model=model,
-        type_model=type_model,
-        bouwjaar=bouwjaar,
-    )
-except Exception:
-    rdw_data = None
+        # RDW schatting voor voertuigen zonder kenteken
+        try:
+            rdw_data = estimate_vehicle_data_from_rdw(
+                merk=merk,
+                model=model,
+                type_model=type_model,
+                bouwjaar=bouwjaar,
+            )
+        except Exception:
+            rdw_data = None
 
-if rdw_data:
-    # Alleen lege velden automatisch aanvullen
-    if not brandstof:
-        brandstof = rdw_data.get("brandstof") or ""
+        if rdw_data:
+            # Alleen lege velden automatisch aanvullen
+            if not brandstof:
+                brandstof = rdw_data.get("brandstof") or ""
 
-    if not gewicht:
-        gewicht = rdw_data.get("gewicht") or ""
+            if not gewicht:
+                gewicht = rdw_data.get("gewicht") or ""
 
-    if not catalogus_part:
-        catalogus_part = rdw_data.get("cataloguswaarde") or ""
+            if not catalogus_part:
+                catalogus_part = rdw_data.get("cataloguswaarde") or ""
 
-    if not catalogus_zak:
-        catalogus_zak = rdw_data.get("cataloguswaarde") or ""
+            if not catalogus_zak:
+                catalogus_zak = rdw_data.get("cataloguswaarde") or ""
 
-    if not catalogus_legacy:
-        catalogus_legacy = rdw_data.get("cataloguswaarde") or ""
+            if not catalogus_legacy:
+                catalogus_legacy = rdw_data.get("cataloguswaarde") or ""
 
-    voertuig_type = (
-        rdw_data.get("voertuig_type")
-        or voertuig_type
-        or "personenauto"
-    )
+            voertuig_type = (
+                rdw_data.get("voertuig_type")
+                or voertuig_type
+                or "personenauto"
+            )
 
         def f(name):
+
             return _parse_float((request.form.get(name) or "").strip())
 
         data = (

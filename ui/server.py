@@ -3,49 +3,35 @@ import sys
 import time
 import re
 import os
-from functools import wraps
-from pathlib import Path
 import secrets
 import requests
 import msal
 import base64
+from functools import wraps
+from pathlib import Path
+from datetime import datetime
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-from datetime import datetime
-
-import psycopg
 from psycopg.rows import dict_row
 from psycopg import OperationalError
 from psycopg_pool import ConnectionPool
 from flask import (
-    Flask,
-    render_template,
-    request,
-    redirect,
-    url_for,
-    flash,
-    send_file,
-    jsonify,
-    session,
+    Flask, render_template, request, redirect, url_for,
+    flash, send_file, jsonify, session,
 )
-
 from werkzeug.security import generate_password_hash, check_password_hash
 
-from importers import import_excel, get_last_batch_id  # noqa
-from outlook_msg import write_msg_outlook  # noqa
-from voertuigdata import get_vehicle_info  # noqa
-from rules import bepaal_dekking  # noqa
-from rolls_kiwa import get_meldcode_en_type  # noqa
-from pdfgen import generate_offer_pdf  # noqa
-from postgen import generate_post_letter_pdf  # noqa
-from mailgen import (
-    load_template,
-    render_template as render_mail_template,
-    guess_aanhef_en_achternaam,
-)  # noqa
+from importers import import_excel, get_last_batch_id
+from outlook_msg import write_msg_outlook
+from voertuigdata import get_vehicle_info
+from rules import bepaal_dekking
+from rolls_kiwa import get_meldcode_en_type
+from pdfgen import generate_offer_pdf
+from postgen import generate_post_letter_pdf
+from mailgen import load_template, render_template as render_mail_template, guess_aanhef_en_achternaam
 
 AANVRAAG_LINK = "https://www.klaasvis.nl/aanvraagformulier/"
 
@@ -59,30 +45,12 @@ MICROSOFT_CLIENT_ID = os.environ.get("MICROSOFT_CLIENT_ID", "").strip()
 MICROSOFT_TENANT_ID = os.environ.get("MICROSOFT_TENANT_ID", "").strip()
 MICROSOFT_CLIENT_SECRET = os.environ.get("MICROSOFT_CLIENT_SECRET", "").strip()
 MICROSOFT_REDIRECT_URI = os.environ.get("MICROSOFT_REDIRECT_URI", "").strip()
-MICROSOFT_AUTHORITY = (
-
-    f"https://login.microsoftonline.com/{MICROSOFT_TENANT_ID}"
-
-    if MICROSOFT_TENANT_ID
-
-    else ""
-
-)
-
-MICROSOFT_SCOPES = [
-
-    "User.Read",
-    "Mail.ReadWrite",
-]
+MICROSOFT_AUTHORITY = f"https://login.microsoftonline.com/{MICROSOFT_TENANT_ID}" if MICROSOFT_TENANT_ID else ""
+MICROSOFT_SCOPES = ["User.Read", "Mail.ReadWrite"]
 
 DB_READY = False
 DB_POOL = None
 
-
-
-# -----------------------------
-# Login helpers
-# -----------------------------
 DEFAULT_USERS = [
     ("randy", "Randy", "admin"),
     ("tim", "Tim", "medewerker"),
@@ -106,7 +74,6 @@ def admin_required(f):
             flash("Alleen de beheerder heeft toegang tot gebruikersbeheer.", "error")
             return redirect(url_for("dashboard"))
         return f(*args, **kwargs)
-
     return wrapper
 
 
@@ -116,51 +83,28 @@ def login_required(f):
         if not session.get("logged_in"):
             return redirect(url_for("login"))
         return f(*args, **kwargs)
-
     return wrapper
 
 
-# -----------------------------
-# DB helpers PostgreSQL / Supabase
-# -----------------------------
 def connect():
-
     global DB_POOL
 
     if not DATABASE_URL:
-
         raise RuntimeError("DATABASE_URL ontbreekt. Zet deze in Render Environment Variables.")
 
     if DB_POOL is None:
-
         DB_POOL = ConnectionPool(
-
             conninfo=DATABASE_URL,
-
             min_size=1,
-
             max_size=5,
-
             kwargs={
-
                 "row_factory": dict_row,
-
                 "connect_timeout": 15,
-
                 "prepare_threshold": None,
-
             },
-
         )
 
     return DB_POOL.connection()
-
-    return psycopg.connect(
-        DATABASE_URL,
-        row_factory=dict_row,
-        connect_timeout=15,
-        prepare_threshold=None,
-    )
 
 
 def _table_columns(conn, table_name: str) -> set[str]:
@@ -178,9 +122,8 @@ def _table_columns(conn, table_name: str) -> set[str]:
 
 def _ensure_column(conn, table: str, col: str, ddl_type: str):
     cols = _table_columns(conn, table)
-    if col in cols:
-        return
-    conn.execute(f"ALTER TABLE {table} ADD COLUMN {col} {ddl_type}")
+    if col not in cols:
+        conn.execute(f"ALTER TABLE {table} ADD COLUMN {col} {ddl_type}")
 
 
 def _execute_retry(conn, sql: str, params=(), retries: int = 8, sleep_s: float = 0.25):
@@ -191,7 +134,6 @@ def _execute_retry(conn, sql: str, params=(), retries: int = 8, sleep_s: float =
         except OperationalError as e:
             last_err = e
             time.sleep(sleep_s)
-            continue
     raise last_err
 
 
@@ -213,13 +155,7 @@ def seed_default_users(conn):
             INSERT INTO users (username, display_name, password_hash, role, created_at, active)
             VALUES (%s, %s, %s, %s, %s, 1)
             """,
-            (
-                username,
-                display_name,
-                generate_password_hash(temp_password),
-                role,
-                now,
-            ),
+            (username, display_name, generate_password_hash(temp_password), role, now),
         )
 
 
@@ -237,92 +173,84 @@ def ensure_db():
                 created_at TEXT,
                 month_key TEXT,
                 batch_id TEXT,
-
                 klantnaam TEXT,
                 klant_type TEXT,
-
                 adres TEXT,
                 postcode TEXT,
                 plaats TEXT,
                 telefoon TEXT,
                 email TEXT,
-
                 kenteken TEXT,
                 merk TEXT,
                 model TEXT,
                 type_model TEXT,
-
                 voertuig_type TEXT,
                 bouwjaar INTEGER,
-
                 regio INTEGER,
                 dekking TEXT,
                 benodigde_svj INTEGER,
-
                 delivery_method TEXT,
                 delivery_status TEXT,
-
                 offer_pdf_path TEXT,
                 eml_path TEXT,
                 post_letter_path TEXT,
-
                 is_blocked INTEGER DEFAULT 0,
                 block_reason TEXT,
                 block_note TEXT,
-
                 follow_up_due_at TEXT,
                 call_status TEXT DEFAULT 'open',
                 decision_status TEXT DEFAULT 'open',
-
                 call_notes TEXT,
                 last_call_at TEXT
             )
             """
         )
 
-        _ensure_column(conn, "offers", "maandpremie", "DOUBLE PRECISION")
-        _ensure_column(conn, "offers", "dienstverlening_bedrag", "DOUBLE PRECISION")
-        _ensure_column(conn, "offers", "svj_override", "INTEGER")
-        _ensure_column(conn, "offers", "is_bestaande_klant", "INTEGER DEFAULT 0")
-        _ensure_column(conn, "offers", "revision_of", "TEXT")
-        _ensure_column(conn, "offers", "revision_no", "INTEGER DEFAULT 0")
-        _ensure_column(conn, "offers", "dekking_override", "TEXT")
-        _ensure_column(conn, "offers", "extra_svi", "INTEGER DEFAULT 0")
-        _ensure_column(conn, "offers", "extra_rb", "INTEGER DEFAULT 0")
-        _ensure_column(conn, "offers", "created_by", "TEXT")
-        _ensure_column(conn, "offers", "updated_by", "TEXT")
-        _ensure_column(conn, "offers", "updated_at", "TEXT")
-        _ensure_column(conn, "offers", "mail_template_type", "TEXT DEFAULT 'auto'")
+        for col, ddl in [
+            ("maandpremie", "DOUBLE PRECISION"),
+            ("dienstverlening_bedrag", "DOUBLE PRECISION"),
+            ("svj_override", "INTEGER"),
+            ("is_bestaande_klant", "INTEGER DEFAULT 0"),
+            ("revision_of", "TEXT"),
+            ("revision_no", "INTEGER DEFAULT 0"),
+            ("dekking_override", "TEXT"),
+            ("extra_svi", "INTEGER DEFAULT 0"),
+            ("extra_rb", "INTEGER DEFAULT 0"),
+            ("created_by", "TEXT"),
+            ("updated_by", "TEXT"),
+            ("updated_at", "TEXT"),
+            ("mail_template_type", "TEXT DEFAULT 'auto'"),
+            ("no_plate_vehicle_id", "INTEGER"),
+            ("np_gewicht", "TEXT"),
+            ("np_maandpremie", "DOUBLE PRECISION"),
+            ("np_cataloguswaarde", "TEXT"),
+            ("np_cataloguswaarde_part", "TEXT"),
+            ("np_cataloguswaarde_zak", "TEXT"),
+        ]:
+            _ensure_column(conn, "offers", col, ddl)
 
         conn.execute(
             """
             CREATE TABLE IF NOT EXISTS no_plate_vehicles (
                 id SERIAL PRIMARY KEY,
-
                 merk TEXT,
                 model TEXT,
                 type_model TEXT,
-
                 voertuig_type TEXT,
                 bouwjaar INTEGER,
-
                 brandstof TEXT,
                 cataloguswaarde TEXT,
                 gewicht TEXT,
-
                 cataloguswaarde_part TEXT,
                 cataloguswaarde_zak TEXT,
-
                 premie_part_r1 DOUBLE PRECISION,
                 premie_part_r2 DOUBLE PRECISION,
                 premie_part_r3 DOUBLE PRECISION,
                 premie_part_r4 DOUBLE PRECISION,
-
                 premie_zak_r1 DOUBLE PRECISION,
                 premie_zak_r2 DOUBLE PRECISION,
                 premie_zak_r3 DOUBLE PRECISION,
                 premie_zak_r4 DOUBLE PRECISION,
-
                 created_at TEXT
             )
             """
@@ -331,13 +259,6 @@ def ensure_db():
         _ensure_column(conn, "no_plate_vehicles", "brandstof", "TEXT")
         _ensure_column(conn, "no_plate_vehicles", "cataloguswaarde_part", "TEXT")
         _ensure_column(conn, "no_plate_vehicles", "cataloguswaarde_zak", "TEXT")
-
-        _ensure_column(conn, "offers", "no_plate_vehicle_id", "INTEGER")
-        _ensure_column(conn, "offers", "np_gewicht", "TEXT")
-        _ensure_column(conn, "offers", "np_maandpremie", "DOUBLE PRECISION")
-        _ensure_column(conn, "offers", "np_cataloguswaarde", "TEXT")
-        _ensure_column(conn, "offers", "np_cataloguswaarde_part", "TEXT")
-        _ensure_column(conn, "offers", "np_cataloguswaarde_zak", "TEXT")
 
         conn.execute(
             """
@@ -352,22 +273,23 @@ def ensure_db():
             """
         )
 
-        _ensure_column(conn, "users", "active", "INTEGER DEFAULT 1")
-        _ensure_column(conn, "users", "last_login_at", "TEXT")
-        _ensure_column(conn, "users", "ms_graph_email", "TEXT")
-        _ensure_column(conn, "users", "ms_graph_access_token", "TEXT")
-        _ensure_column(conn, "users", "ms_graph_refresh_token", "TEXT")
-        _ensure_column(conn, "users", "ms_graph_token_expires_at", "TEXT")
-        _ensure_column(conn, "users", "ms_graph_connected_at", "TEXT")
+        for col, ddl in [
+            ("active", "INTEGER DEFAULT 1"),
+            ("last_login_at", "TEXT"),
+            ("ms_graph_email", "TEXT"),
+            ("ms_graph_access_token", "TEXT"),
+            ("ms_graph_refresh_token", "TEXT"),
+            ("ms_graph_token_expires_at", "TEXT"),
+            ("ms_graph_connected_at", "TEXT"),
+        ]:
+            _ensure_column(conn, "users", col, ddl)
+
         seed_default_users(conn)
         conn.commit()
 
     DB_READY = True
 
 
-# -----------------------------
-# Login routes
-# -----------------------------
 @app.route("/login", methods=["GET", "POST"])
 def login():
     ensure_db()
@@ -446,26 +368,19 @@ def account():
                 (username,),
             ).fetchone()
 
-            if not user or not check_password_hash(
-                user["password_hash"],
-                current_password
-            ):
+            if not user or not check_password_hash(user["password_hash"], current_password):
                 flash("Huidig wachtwoord klopt niet.", "error")
                 return redirect(url_for("account"))
 
             conn.execute(
                 "UPDATE users SET password_hash = %s WHERE id = %s",
-                (
-                    generate_password_hash(new_password),
-                    user["id"],
-                ),
+                (generate_password_hash(new_password), user["id"]),
             )
             conn.commit()
 
         flash("Wachtwoord succesvol gewijzigd.", "ok")
         return redirect(url_for("account"))
 
-    # Outlook gegevens ophalen
     with connect() as conn:
         user = conn.execute(
             """
@@ -481,6 +396,7 @@ def account():
         ms_graph_email=user["ms_graph_email"] if user else None,
         ms_graph_connected_at=user["ms_graph_connected_at"] if user else None,
     )
+
 
 @app.route("/account/microsoft/connect")
 @login_required
@@ -504,7 +420,6 @@ def microsoft_connect():
     )
 
     session["ms_auth_flow"] = flow
-
     return redirect(flow["auth_uri"])
 
 
@@ -524,10 +439,7 @@ def microsoft_callback():
         client_credential=MICROSOFT_CLIENT_SECRET,
     )
 
-    result = app_msal.acquire_token_by_auth_code_flow(
-        flow,
-        dict(request.args),
-    )
+    result = app_msal.acquire_token_by_auth_code_flow(flow, dict(request.args))
 
     if "access_token" not in result:
         msg = result.get("error_description") or result.get("error") or "geen toegangstoken ontvangen"
@@ -537,10 +449,7 @@ def microsoft_callback():
     access_token = result.get("access_token")
     refresh_token = result.get("refresh_token")
     expires_in = int(result.get("expires_in", 3600))
-
-    expires_at = datetime.fromtimestamp(
-        datetime.now().timestamp() + expires_in
-    ).strftime("%Y-%m-%d %H:%M:%S")
+    expires_at = datetime.fromtimestamp(datetime.now().timestamp() + expires_in).strftime("%Y-%m-%d %H:%M:%S")
 
     profile_res = requests.get(
         "https://graph.microsoft.com/v1.0/me",
@@ -607,7 +516,8 @@ def microsoft_disconnect():
 
     flash("Microsoft Outlook koppeling verwijderd.", "ok")
     return redirect(url_for("account"))
-    
+
+
 @app.route("/admin/users")
 @admin_required
 def admin_users():
@@ -686,12 +596,8 @@ def admin_toggle_user_active(user_id: int):
     return redirect(url_for("admin_users"))
 
 
-# -----------------------------
-# Helpers
-# -----------------------------
 def denylist_exists() -> bool:
-    p = PROJECT_ROOT / "data" / "denylist.docx"
-    return p.exists()
+    return (PROJECT_ROOT / "data" / "denylist.docx").exists()
 
 
 def safe_relpath(p: Path) -> str:
@@ -756,27 +662,29 @@ def _pick_np_catalogus(np_row, klant_type: str, offer_row):
     kt = (klant_type or "").strip().lower()
 
     if kt == "zakelijk":
-        o = (offer_row["np_cataloguswaarde_zak"] or "").strip() if "np_cataloguswaarde_zak" in offer_row.keys() else ""
-        if o:
-            return o
-        o_legacy = (offer_row["np_cataloguswaarde"] or "").strip() if "np_cataloguswaarde" in offer_row.keys() else ""
-        if o_legacy:
-            return o_legacy
-        v = (np_row["cataloguswaarde_zak"] or "").strip() if "cataloguswaarde_zak" in np_row.keys() else ""
-        if v:
-            return v
-        return (np_row["cataloguswaarde"] or "").strip()
+        for key in ("np_cataloguswaarde_zak", "np_cataloguswaarde"):
+            if key in offer_row.keys():
+                v = (offer_row[key] or "").strip()
+                if v:
+                    return v
+        for key in ("cataloguswaarde_zak", "cataloguswaarde"):
+            if key in np_row.keys():
+                v = (np_row[key] or "").strip()
+                if v:
+                    return v
+        return ""
 
-    o = (offer_row["np_cataloguswaarde_part"] or "").strip() if "np_cataloguswaarde_part" in offer_row.keys() else ""
-    if o:
-        return o
-    o_legacy = (offer_row["np_cataloguswaarde"] or "").strip() if "np_cataloguswaarde" in offer_row.keys() else ""
-    if o_legacy:
-        return o_legacy
-    v = (np_row["cataloguswaarde_part"] or "").strip() if "cataloguswaarde_part" in np_row.keys() else ""
-    if v:
-        return v
-    return (np_row["cataloguswaarde"] or "").strip()
+    for key in ("np_cataloguswaarde_part", "np_cataloguswaarde"):
+        if key in offer_row.keys():
+            v = (offer_row[key] or "").strip()
+            if v:
+                return v
+    for key in ("cataloguswaarde_part", "cataloguswaarde"):
+        if key in np_row.keys():
+            v = (np_row[key] or "").strip()
+            if v:
+                return v
+    return ""
 
 
 def _kenteken_lookup_value(kenteken: str) -> str:
@@ -824,11 +732,7 @@ def _initials_from_name(full_name: str, achternaam: str) -> str:
     full = _strip_known_titles(full_name)
     a = (achternaam or "").strip()
 
-    if a and full.lower().endswith(a.lower()):
-        base = full[: len(full) - len(a)].strip()
-    else:
-        base = full
-
+    base = full[: len(full) - len(a)].strip() if a and full.lower().endswith(a.lower()) else full
     if not base:
         return ""
 
@@ -839,8 +743,7 @@ def _initials_from_name(full_name: str, achternaam: str) -> str:
 
     initials = []
     for t in tokens:
-        parts = re.split(r"[-/]", t)
-        for p in parts:
+        for p in re.split(r"[-/]", t):
             p = re.sub(r"[^A-Za-zÀ-ÿ]", "", p)
             if p:
                 initials.append(p[0].upper() + ".")
@@ -856,7 +759,6 @@ def _klant_display_for_filename(klantnaam: str, klant_type: str) -> str:
 
     aanhef, achternaam = guess_aanhef_en_achternaam(kn)
     initials = _initials_from_name(kn, achternaam)
-
     parts = [p for p in [aanhef, initials, achternaam] if p]
     return " ".join(parts).strip() or kn
 
@@ -871,9 +773,9 @@ def _short_offer_no_for_filename(offer_no: str) -> str:
 
 
 def _offer_pdf_filename_base(klantnaam: str, klant_type: str, offer_no: str) -> str:
-    display = _klant_display_for_filename(klantnaam, klant_type)
-    short_no = _short_offer_no_for_filename(offer_no)
-    return _safe_filename(f"Verzekeringsvoorstel voor {display} - {short_no}")
+    return _safe_filename(
+        f"Verzekeringsvoorstel voor {_klant_display_for_filename(klantnaam, klant_type)} - {_short_offer_no_for_filename(offer_no)}"
+    )
 
 
 def _normalize_dekking_override(v: str) -> str:
@@ -898,7 +800,6 @@ def _normalize_dekking_override(v: str) -> str:
 
 def _compose_dekking(auto_dekking: str, dekking_override: str, extra_svi, extra_rb) -> str:
     dekking = _normalize_dekking_override(dekking_override) or (auto_dekking or "").strip()
-
     parts = [p.strip() for p in str(dekking).split("/") if p.strip()]
     seen = {p.lower() for p in parts}
 
@@ -917,9 +818,6 @@ def _compose_dekking(auto_dekking: str, dekking_override: str, extra_svi, extra_
     return " / ".join(parts)
 
 
-# -----------------------------
-# Routes
-# -----------------------------
 @app.route("/")
 @login_required
 def dashboard():
@@ -931,12 +829,10 @@ def dashboard():
         open_deliveries = conn.execute(
             """
             SELECT COUNT(*) AS c FROM offers
-            WHERE is_blocked = 0 AND delivery_status IN ('email_klaar','post_klaar')
+            WHERE is_blocked = 0 AND delivery_status IN ('email_klaar','post_klaar','outlook_concept_klaar')
             """
         ).fetchone()["c"]
-        blocked = conn.execute(
-            "SELECT COUNT(*) AS c FROM offers WHERE is_blocked = 1"
-        ).fetchone()["c"]
+        blocked = conn.execute("SELECT COUNT(*) AS c FROM offers WHERE is_blocked = 1").fetchone()["c"]
 
     return render_template(
         "dashboard.html",
@@ -963,7 +859,6 @@ def import_page():
 
     inbox_dir = PROJECT_ROOT / "data" / "inbox"
     inbox_dir.mkdir(parents=True, exist_ok=True)
-
     fixed_deny = PROJECT_ROOT / "data" / "denylist.docx"
 
     if request.method == "POST":
@@ -986,8 +881,8 @@ def import_page():
 
         try:
             n = import_excel(str(excel_path), deny_path)
-
             batch_id = get_last_batch_id()
+
             if batch_id:
                 with connect() as conn:
                     conn.execute(
@@ -1024,191 +919,111 @@ def import_page():
 
 
 @app.route("/offers")
-
 @login_required
-
 def offers():
-
     ensure_db()
 
     q = request.args.get("q", "").strip()
-
     month = request.args.get("month", "").strip()
-
     delivery = request.args.get("delivery", "").strip()
 
     try:
-
         page = int(request.args.get("page", "1"))
-
     except Exception:
-
         page = 1
 
     if page < 1:
-
         page = 1
 
     per_page = 50
-
     offset = (page - 1) * per_page
 
     sql = """
-
     SELECT offer_no, created_at, month_key, batch_id,
-
            klantnaam, klant_type, email, telefoon,
-
            kenteken, merk, model, type_model, voertuig_type, bouwjaar,
-
            regio, dekking,
-
            delivery_method, delivery_status, offer_pdf_path, eml_path, post_letter_path,
-
            is_blocked, block_reason, block_note,
-
            follow_up_due_at, call_status, decision_status,
-
            maandpremie, dienstverlening_bedrag,
-
            svj_override, is_bestaande_klant,
-
            revision_of, revision_no,
-
            no_plate_vehicle_id, np_gewicht, np_maandpremie,
-
            np_cataloguswaarde, np_cataloguswaarde_part, np_cataloguswaarde_zak,
-
            created_by, updated_by, updated_at, mail_template_type
-
     FROM offers
-
     WHERE 1=1
-
     """
-
     params = []
 
     count_sql = "SELECT COUNT(*) AS c FROM offers WHERE 1=1"
-
     count_params = []
 
     if month:
-
         sql += " AND month_key = %s"
-
         count_sql += " AND month_key = %s"
-
         params.append(month)
-
         count_params.append(month)
 
     if q:
-
         sql += " AND (klantnaam ILIKE %s OR kenteken ILIKE %s OR email ILIKE %s OR offer_no ILIKE %s)"
-
         count_sql += " AND (klantnaam ILIKE %s OR kenteken ILIKE %s OR email ILIKE %s OR offer_no ILIKE %s)"
-
         like = f"%{q}%"
-
         params.extend([like, like, like, like])
-
         count_params.extend([like, like, like, like])
 
     if delivery and delivery != "all":
-
         if delivery == "geblokkeerd":
-
             sql += " AND is_blocked = 1"
-
             count_sql += " AND is_blocked = 1"
-
         else:
-
             sql += " AND is_blocked = 0 AND delivery_status = %s"
-
             count_sql += " AND is_blocked = 0 AND delivery_status = %s"
-
             params.append(delivery)
-
             count_params.append(delivery)
 
     sql += """
-
     ORDER BY
-
         CASE
-
             WHEN COALESCE(offer_pdf_path,'')='' AND COALESCE(eml_path,'')='' AND COALESCE(post_letter_path,'')=''
-
             THEN 0 ELSE 1
-
         END ASC,
-
         CASE WHEN lower(COALESCE(klant_type,''))='zakelijk' THEN 1 ELSE 0 END ASC,
-
         COALESCE(regio, 999) ASC,
-
         created_at DESC,
-
         offer_no DESC
-
     LIMIT %s OFFSET %s
-
     """
-
     params.extend([per_page, offset])
 
     with connect() as conn:
-
         rows = conn.execute(sql, tuple(params)).fetchall()
-
         total_rows = conn.execute(count_sql, tuple(count_params)).fetchone()["c"]
-
         months = conn.execute(
-
             """
-
             SELECT DISTINCT month_key FROM offers
-
             WHERE month_key IS NOT NULL AND month_key != ''
-
             ORDER BY month_key DESC
-
             LIMIT 24
-
             """
-
         ).fetchall()
 
     total_pages = max(1, (total_rows + per_page - 1) // per_page)
 
     return render_template(
-
         "offers.html",
-
         rows=rows,
-
         q=q,
-
         month=month,
-
         delivery=delivery or "all",
-
         months=[r["month_key"] for r in months],
-
         page=page,
-
         per_page=per_page,
-
         total_rows=total_rows,
-
         total_pages=total_pages,
-
         has_prev=page > 1,
-
         has_next=page < total_pages,
-
     )
 
 
@@ -1216,6 +1031,7 @@ def offers():
 @login_required
 def blocked():
     ensure_db()
+
     with connect() as conn:
         rows = conn.execute(
             """
@@ -1226,6 +1042,7 @@ def blocked():
             LIMIT 500
             """
         ).fetchall()
+
     return render_template("blocked.html", rows=rows)
 
 
@@ -1385,6 +1202,7 @@ def download_postbrief(offer_no: str):
 
     with connect() as conn:
         r = conn.execute("SELECT * FROM offers WHERE offer_no = %s", (offer_no,)).fetchone()
+
         if not r:
             flash("Offerte niet gevonden.", "error")
             return redirect(url_for("offers"))
@@ -1444,9 +1262,6 @@ def download_postbrief(offer_no: str):
     return send_file(abs_path, as_attachment=True, download_name=f"Postbrief_{offer_no}.pdf")
 
 
-# -----------------------------
-# No-plate routes
-# -----------------------------
 @app.route("/no-plate", methods=["GET", "POST"])
 @login_required
 def no_plate():
@@ -1567,9 +1382,11 @@ def no_plate():
 @login_required
 def no_plate_delete(vid: int):
     ensure_db()
+
     with connect() as conn:
         _execute_retry(conn, "DELETE FROM no_plate_vehicles WHERE id = %s", (vid,))
         conn.commit()
+
     flash("No-plate voertuig verwijderd.", "ok")
     return redirect(url_for("no_plate"))
 
@@ -1609,15 +1426,14 @@ def no_plate_search():
     for r in rows:
         label = " ".join(
             [
-                x
-                for x in [
+                x for x in [
                     (r["merk"] or "").strip(),
                     (r["model"] or "").strip(),
                     (r["type_model"] or "").strip(),
-                ]
-                if x
+                ] if x
             ]
         ).strip()
+
         items.append(
             {
                 "id": r["id"],
@@ -1682,9 +1498,7 @@ def set_no_plate_for_offer(offer_no: str):
     flash(f"No-plate voertuig gekoppeld aan {offer_no}.", "ok")
     return redirect(next_url)
 
-# -----------------------------
-# Microsoft Graph helpers
-# -----------------------------
+
 def _get_current_user_graph_tokens(conn):
     user_id = session.get("user_id")
     if not user_id:
@@ -1732,9 +1546,7 @@ def _refresh_graph_token_if_needed(conn, user):
     new_refresh_token = result.get("refresh_token") or refresh_token
     expires_in = int(result.get("expires_in", 3600))
 
-    expires_at = datetime.fromtimestamp(
-        datetime.now().timestamp() + expires_in
-    ).strftime("%Y-%m-%d %H:%M:%S")
+    expires_at = datetime.fromtimestamp(datetime.now().timestamp() + expires_in).strftime("%Y-%m-%d %H:%M:%S")
 
     conn.execute(
         """
@@ -1744,12 +1556,7 @@ def _refresh_graph_token_if_needed(conn, user):
             ms_graph_token_expires_at = %s
         WHERE id = %s
         """,
-        (
-            new_access_token,
-            new_refresh_token,
-            expires_at,
-            user["id"],
-        ),
+        (new_access_token, new_refresh_token, expires_at, user["id"]),
     )
 
     return new_access_token
@@ -1822,9 +1629,8 @@ def create_outlook_draft_with_attachment(conn, to_addr, subject, body_html, pdf_
         "message_id": message_id,
         "graph_email": user["ms_graph_email"] if user else "",
     }
-# -----------------------------
-# Export helpers
-# -----------------------------
+
+
 def _choose_mail_template(
     klant_type: str,
     is_bestaande_klant: bool,
@@ -1907,7 +1713,6 @@ def _build_pdf_and_delivery(conn, r, now: datetime):
         brandstof_final = (np_row["brandstof"] or "").strip()
         gewicht_final = (r["np_gewicht"] or np_row["gewicht"] or "").strip()
         catalogus_final = _pick_np_catalogus(np_row, klant_type, r)
-
         auto_str = " ".join([x for x in [np_merk, np_model] if x]).strip()
 
         bj_int = _parse_int(bouwjaar_final)
@@ -2048,7 +1853,7 @@ def _build_pdf_and_delivery(conn, r, now: datetime):
             filename_base=_offer_pdf_filename_base(r["klantnaam"] or "", klant_type, offer_no),
         )
 
-            if email:
+    if email:
         template = _choose_mail_template(
             klant_type=klant_type,
             is_bestaande_klant=is_bestaande_klant,
@@ -2217,6 +2022,7 @@ def _build_pdf_and_delivery(conn, r, now: datetime):
         "post": post_letter_path,
     }
 
+
 @app.post("/export-last-batch")
 @login_required
 def export_last_batch():
@@ -2264,7 +2070,7 @@ def export_last_batch():
                         "offer_no": r["offer_no"],
                         "klantnaam": r["klantnaam"] or "",
                         "email": (r["email"] or "").strip(),
-                        "msg_path": info["msg"],
+                        "msg_path": info.get("msg"),
                         "pdf_path": info["pdf"],
                     }
                 )

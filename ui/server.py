@@ -1605,7 +1605,7 @@ def create_outlook_draft_with_attachment(conn, to_addr, subject, body_html, pdf_
     if create_res.status_code >= 400:
         raise RuntimeError(f"Graph concept aanmaken mislukt: {create_res.text}")
 
-       message = create_res.json()
+    message = create_res.json()
     message_id = message.get("id")
 
     logo_path = PROJECT_ROOT / "static" / "logo_klaasvis.png"

@@ -1886,7 +1886,7 @@ def _build_pdf_and_delivery(conn, r, now: datetime):
             [x for x in [(r["merk"] or "").strip(), (r["model"] or "").strip()] if x]
         ).strip() or "auto"
 
-               base_url = MICROSOFT_REDIRECT_URI.replace("/auth/microsoft/callback", "").rstrip("/")
+        base_url = MICROSOFT_REDIRECT_URI.replace("/auth/microsoft/callback", "").rstrip("/")
         logo_url = f"{base_url}/static/logo_klaasvis.png"
 
         body = render_mail_template(

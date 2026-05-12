@@ -1605,8 +1605,33 @@ def create_outlook_draft_with_attachment(conn, to_addr, subject, body_html, pdf_
     if create_res.status_code >= 400:
         raise RuntimeError(f"Graph concept aanmaken mislukt: {create_res.text}")
 
-    message = create_res.json()
+       message = create_res.json()
     message_id = message.get("id")
+
+    logo_path = PROJECT_ROOT / "static" / "logo_klaasvis.png"
+    if logo_path.exists():
+        logo_bytes = logo_path.read_bytes()
+        logo_payload = {
+            "@odata.type": "#microsoft.graph.fileAttachment",
+            "name": "logo_klaasvis.png",
+            "contentType": "image/png",
+            "contentBytes": base64.b64encode(logo_bytes).decode("ascii"),
+            "isInline": True,
+            "contentId": "klaasvis_logo",
+        }
+
+        logo_res = requests.post(
+            f"https://graph.microsoft.com/v1.0/me/messages/{message_id}/attachments",
+            headers={
+                "Authorization": f"Bearer {access_token}",
+                "Content-Type": "application/json",
+            },
+            json=logo_payload,
+            timeout=30,
+        )
+
+        if logo_res.status_code >= 400:
+            raise RuntimeError(f"Graph logo toevoegen mislukt: {logo_res.text}")
 
     abs_pdf = (PROJECT_ROOT / pdf_path).resolve()
     if not abs_pdf.exists():

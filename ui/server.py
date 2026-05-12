@@ -1886,6 +1886,9 @@ def _build_pdf_and_delivery(conn, r, now: datetime):
             [x for x in [(r["merk"] or "").strip(), (r["model"] or "").strip()] if x]
         ).strip() or "auto"
 
+               base_url = MICROSOFT_REDIRECT_URI.replace("/auth/microsoft/callback", "").rstrip("/")
+        logo_url = f"{base_url}/static/logo_klaasvis.png"
+
         body = render_mail_template(
             template,
             {
@@ -1897,10 +1900,12 @@ def _build_pdf_and_delivery(conn, r, now: datetime):
                 "aanvraag_link": AANVRAAG_LINK,
                 "revision_no": revision_no,
                 "revision_of": r["revision_of"] or "",
+                "logo_url": logo_url,
             },
         )
 
         subject = _subject_for_offer(klant_type, revision_no, offer_no)
+
 
         graph_info = None
         graph_error = ""

@@ -692,23 +692,35 @@ def _kenteken_lookup_value(kenteken: str) -> str:
 
 
 def _format_nl_kenteken(kenteken: str) -> str:
-    raw = (kenteken or "").strip().upper()
-    if not raw:
+    s = _kenteken_lookup_value(kenteken)
+    if not s:
         return ""
 
-    if "-" in raw:
-        parts = [re.sub(r"[^A-Z0-9]", "", p) for p in raw.split("-")]
-        parts = [p for p in parts if p]
-        return "-".join(parts)
-
-    s = _kenteken_lookup_value(raw)
     if len(s) != 6:
         return s
 
-    if re.match(r"^[A-Z]\d{3}[A-Z]{2}$", s):
-        return f"{s[:1]}-{s[1:4]}-{s[4:]}"
-    if re.match(r"^[A-Z]{2}\d{3}[A-Z]$", s):
-        return f"{s[:2]}-{s[2:5]}-{s[5:]}"
+    patterns = [
+        (r"^[A-Z]{2}\d{4}$", (2, 4)),        # XX-99-99
+        (r"^\d{4}[A-Z]{2}$", (2, 4)),        # 99-99-XX
+        (r"^\d{2}[A-Z]{2}\d{2}$", (2, 4)),  # 99-XX-99
+        (r"^[A-Z]{2}\d{2}[A-Z]{2}$", (2, 4)), # XX-99-XX
+        (r"^[A-Z]{4}\d{2}$", (2, 4)),        # XX-XX-99
+        (r"^\d{2}[A-Z]{4}$", (2, 4)),        # 99-XX-XX
+        (r"^\d{2}[A-Z]{3}\d$", (2, 5)),      # 99-XXX-9
+        (r"^\d[A-Z]{3}\d{2}$", (1, 4)),      # 9-XXX-99
+        (r"^[A-Z]{2}\d{3}[A-Z]$", (2, 5)),  # XX-999-X
+        (r"^[A-Z]\d{3}[A-Z]{2}$", (1, 4)),  # X-999-XX
+        (r"^[A-Z]{3}\d{2}[A-Z]$", (3, 5)),  # XXX-99-X
+        (r"^[A-Z]\d{2}[A-Z]{3}$", (1, 3)),  # X-99-XXX
+        (r"^\d[A-Z]{2}\d{3}$", (1, 3)),      # 9-XX-999
+        (r"^\d{3}[A-Z]{2}\d$", (3, 5)),      # 999-XX-9
+    ]
+
+    for pattern, cuts in patterns:
+        if re.match(pattern, s):
+            a, b = cuts
+            return f"{s[:a]}-{s[a:b]}-{s[b:]}"
+
     return f"{s[:2]}-{s[2:4]}-{s[4:]}"
 
 

@@ -10,6 +10,7 @@ import base64
 from functools import wraps
 from pathlib import Path
 from datetime import datetime
+from pypdf import PdfReader, PdfWriter
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 if str(PROJECT_ROOT) not in sys.path:

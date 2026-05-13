@@ -1378,9 +1378,6 @@ def no_plate():
 
         print("RDW resultaat veilig verwerkt:", rdw_data)
 
-            except Exception as e:
-                print("RDW-schatting mislukt:", e)
-
         def f(name):
             return _parse_float((request.form.get(name) or "").strip())
 

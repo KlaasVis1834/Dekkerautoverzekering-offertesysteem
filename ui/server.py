@@ -2071,7 +2071,7 @@ def _build_pdf_and_delivery(conn, r, now: datetime):
         [x for x in [(r["merk"] or "").strip(), (r["model"] or "").strip()] if x]
     ).strip() or "auto"
 
-       post_letter_path = generate_post_letter_pdf(
+    post_letter_path = generate_post_letter_pdf(
         out_base_dir="data/post",
         dt=now,
         offer_no=offer_no,
@@ -2080,7 +2080,7 @@ def _build_pdf_and_delivery(conn, r, now: datetime):
         postcode=r["postcode"] or "",
         plaats=r["plaats"] or "",
         auto=auto_show,
-        behandeld_door="Randy Buijs",
+        behandeld_door="Dirk Slootweg",
     )
 
     post_package_path = combine_post_package_pdf(
@@ -2089,6 +2089,7 @@ def _build_pdf_and_delivery(conn, r, now: datetime):
         offer_no=offer_no,
         klantnaam=r["klantnaam"] or "",
     )
+
     _execute_retry(
         conn,
         """
@@ -2116,6 +2117,7 @@ def _build_pdf_and_delivery(conn, r, now: datetime):
         "pdf": offer_pdf_path,
         "post": post_package_path,
     }
+
 
 
 @app.post("/export-last-batch")

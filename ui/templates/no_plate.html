@@ -5,7 +5,10 @@
   <div style="display:flex; align-items:flex-start; justify-content:space-between; gap:12px; flex-wrap:wrap;">
     <div>
       <div style="font-weight:900; font-size:18px;">No-plate voertuigen</div>
-      <div class="muted">Voertuigen zonder kenteken (handmatig) met premies per regio en klanttype.</div>
+      <div class="muted">Voertuigen zonder kenteken, bijvoorbeeld auto’s die nog geleverd moeten worden.</div>
+      <div class="muted small" style="margin-top:6px;">
+        Vul merk, model, type model en bouwjaar in. Lege waarden zoals cataloguswaarde, gewicht en brandstof worden bij opslaan automatisch geschat via RDW.
+      </div>
     </div>
 
     <form method="get" action="{{ url_for('no_plate') }}" class="row">
@@ -19,21 +22,29 @@
 <div class="card" style="margin-top:14px;">
   <div style="font-weight:900; font-size:16px; margin-bottom:10px;">Toevoegen / Bewerken</div>
 
+  <div style="background:#f8fafc; border:1px solid var(--line); border-radius:12px; padding:12px; margin-bottom:14px;">
+    <div style="font-weight:900;">RDW schatting</div>
+    <div class="muted small">
+      Als cataloguswaarde, gewicht of brandstof leeg zijn, probeert het systeem deze automatisch te schatten op basis van vergelijkbare RDW-registraties.
+      Handmatig ingevulde waarden blijven altijd leidend.
+    </div>
+  </div>
+
   <form method="post" action="{{ url_for('no_plate') }}" id="npForm">
     <input type="hidden" name="id" id="f_id" />
 
     <div class="split">
       <div>
         <div class="muted small">Merk</div>
-        <input name="merk" id="f_merk" placeholder="Bijv. Volkswagen" />
+        <input name="merk" id="f_merk" placeholder="Bijv. Ford" />
       </div>
       <div>
         <div class="muted small">Model</div>
-        <input name="model" id="f_model" placeholder="Bijv. Golf" />
+        <input name="model" id="f_model" placeholder="Bijv. Kuga" />
       </div>
       <div>
-        <div class="muted small">Type model</div>
-        <input name="type_model" id="f_type_model" placeholder="Bijv. 1.5 TSI" />
+        <div class="muted small">Type model / uitvoering</div>
+        <input name="type_model" id="f_type_model" placeholder="Bijv. ST-Line X 2.5 PHEV" />
       </div>
     </div>
 
@@ -47,26 +58,26 @@
       </div>
       <div>
         <div class="muted small">Bouwjaar</div>
-        <input name="bouwjaar" id="f_bouwjaar" placeholder="Bijv. 2024" />
+        <input name="bouwjaar" id="f_bouwjaar" placeholder="Bijv. 2025" />
       </div>
       <div>
         <div class="muted small">Brandstof</div>
-        <input name="brandstof" id="f_brandstof" placeholder="Bijv. Benzine / Diesel / Hybride / EV" />
+        <input name="brandstof" id="f_brandstof" placeholder="Wordt geschat indien leeg" />
       </div>
     </div>
 
     <div class="split" style="margin-top:10px;">
       <div>
         <div class="muted small">Cataloguswaarde Particulier (incl. btw)</div>
-        <input name="cataloguswaarde_part" id="f_catalogus_part" placeholder="Bijv. € 29.950" />
+        <input name="cataloguswaarde_part" id="f_catalogus_part" placeholder="Wordt geschat indien leeg" />
       </div>
       <div>
         <div class="muted small">Cataloguswaarde Zakelijk (excl. btw / incl. bpm)</div>
-        <input name="cataloguswaarde_zak" id="f_catalogus_zak" placeholder="Bijv. € 24.750" />
+        <input name="cataloguswaarde_zak" id="f_catalogus_zak" placeholder="Wordt geschat indien leeg" />
       </div>
       <div>
         <div class="muted small">Gewicht</div>
-        <input name="gewicht" id="f_gewicht" placeholder="Bijv. 1.230" />
+        <input name="gewicht" id="f_gewicht" placeholder="Wordt geschat indien leeg" />
       </div>
     </div>
 
@@ -123,9 +134,9 @@
     </div>
 
     <div class="row" style="margin-top:14px;">
-      <button class="btn ok" type="submit">Opslaan</button>
+      <button class="btn ok" type="submit">Opslaan en eventueel RDW schatten</button>
       <button class="btn" type="button" onclick="clearForm()">Nieuw</button>
-      <span class="muted small">Tip: “Bewerken” uit de lijst vult dit formulier automatisch.</span>
+      <span class="muted small">Tip: laat cataloguswaarde/gewicht/brandstof leeg als RDW dit automatisch mag schatten.</span>
     </div>
   </form>
 </div>
@@ -175,7 +186,6 @@
           R4: {{ r.premie_zak_r4 or '—' }}
         </td>
         <td>
-          <!-- ✅ FIXED BEWERKEN KNOP -->
           <button class="btn" type="button"
             data-id="{{ r.id }}"
             data-merk="{{ r.merk or '' }}"

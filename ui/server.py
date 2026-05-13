@@ -2080,9 +2080,14 @@ def _build_pdf_and_delivery(conn, r, now: datetime):
         postcode=r["postcode"] or "",
         plaats=r["plaats"] or "",
         auto=auto_show,
-        behandeld_door="Dirk Slootweg",
+        behandeld_door="Randy Buijs",
     )
-
+     post_package_path = combine_post_package_pdf(
+        post_letter_path=post_letter_path,
+        offer_pdf_path=offer_pdf_path,
+        offer_no=offer_no,
+        klantnaam=r["klantnaam"] or "",
+    )
     _execute_retry(
         conn,
         """

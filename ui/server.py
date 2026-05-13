@@ -1327,42 +1327,47 @@ def no_plate():
         catalogus_zak = (request.form.get("cataloguswaarde_zak") or "").strip()
         catalogus_legacy = (request.form.get("cataloguswaarde") or "").strip()
 
+        # ---------------------------------------------------------
         # RDW schatting voor voertuigen zonder kenteken
-        try:
-            rdw_data = estimate_vehicle_data_from_rdw(
-                merk=merk,
-                model=model,
-                type_model=type_model,
-                bouwjaar=bouwjaar,
-            )
-        except Exception:
-            rdw_data = None
+        # Alleen lege velden worden aangevuld.
+        # Handmatig ingevulde waarden blijven leidend.
+        # ---------------------------------------------------------
+        if merk and model:
+            try:
+                rdw_data = estimate_vehicle_data_from_rdw(
+                    merk=merk,
+                    model=model,
+                    type_model=type_model,
+                    bouwjaar=bouwjaar,
+                ) or {}
 
-        if rdw_data:
-            # Alleen lege velden automatisch aanvullen
-            if not brandstof:
-                brandstof = rdw_data.get("brandstof") or ""
+                if not brandstof:
+                    brandstof = rdw_data.get("brandstof") or ""
 
-            if not gewicht:
-                gewicht = rdw_data.get("gewicht") or ""
+                if not gewicht:
+                    gewicht = rdw_data.get("gewicht") or ""
 
-            if not catalogus_part:
-                catalogus_part = rdw_data.get("cataloguswaarde") or ""
+                rdw_catalogus = rdw_data.get("cataloguswaarde") or ""
 
-            if not catalogus_zak:
-                catalogus_zak = rdw_data.get("cataloguswaarde") or ""
+                if not catalogus_part:
+                    catalogus_part = rdw_catalogus
 
-            if not catalogus_legacy:
-                catalogus_legacy = rdw_data.get("cataloguswaarde") or ""
+                if not catalogus_zak:
+                    catalogus_zak = rdw_catalogus
 
-            voertuig_type = (
-                rdw_data.get("voertuig_type")
-                or voertuig_type
-                or "personenauto"
-            )
+                if not catalogus_legacy:
+                    catalogus_legacy = rdw_catalogus
+
+                rdw_voertuig_type = rdw_data.get("voertuig_type") or ""
+                if rdw_voertuig_type in ("personenauto", "bestelauto"):
+                    voertuig_type = rdw_voertuig_type
+
+                print("RDW schatting:", rdw_data)
+
+            except Exception as e:
+                print("RDW-schatting mislukt:", e)
 
         def f(name):
-
             return _parse_float((request.form.get(name) or "").strip())
 
         data = (
@@ -1405,7 +1410,7 @@ def no_plate():
                     """,
                     data + (int(vid),),
                 )
-                flash("No-plate voertuig bijgewerkt.", "ok")
+                flash("No-plate voertuig bijgewerkt. RDW-schatting is toegepast waar velden leeg waren.", "ok")
             else:
                 created_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
                 _execute_retry(
@@ -1426,7 +1431,7 @@ def no_plate():
                     """,
                     data + (created_at,),
                 )
-                flash("No-plate voertuig toegevoegd.", "ok")
+                flash("No-plate voertuig toegevoegd. RDW-schatting is toegepast waar velden leeg waren.", "ok")
 
             conn.commit()
 

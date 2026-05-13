@@ -101,6 +101,22 @@
       border-color:rgba(15,23,42,.18);
     }
 
+    .navlink .count{
+      display:inline-flex;
+      align-items:center;
+      justify-content:center;
+      min-width:20px;
+      height:20px;
+      padding:0 6px;
+      margin-left:6px;
+      border-radius:999px;
+      background:#dc2626;
+      color:#fff;
+      font-size:11px;
+      font-weight:900;
+      line-height:1;
+    }
+
     .wrap{
       max-width:1200px;
       margin:0 auto;
@@ -468,6 +484,14 @@
       <a class="navlink" href="{{ url_for('dashboard') }}">Dashboard</a>
       <a class="navlink" href="{{ url_for('import_page') }}">Import</a>
       <a class="navlink" href="{{ url_for('offers') }}">Offertes</a>
+
+      <a class="navlink" href="{{ url_for('applications') }}">
+        Aanvragen
+        {% if pending_applications_count and pending_applications_count > 0 %}
+          <span class="count">{{ pending_applications_count }}</span>
+        {% endif %}
+      </a>
+
       <a class="navlink" href="{{ url_for('no_plate') }}">Zonder kenteken</a>
 
       {% if session.get("role") == "admin" %}

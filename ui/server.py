@@ -1332,38 +1332,51 @@ def no_plate():
         # Alleen lege velden worden aangevuld.
         # Handmatig ingevulde waarden blijven leidend.
         # ---------------------------------------------------------
-        if merk and model:
-            try:
-                rdw_data = estimate_vehicle_data_from_rdw(
-                    merk=merk,
-                    model=model,
-                    type_model=type_model,
-                    bouwjaar=bouwjaar,
-                ) or {}
+rdw_data = {}
 
-                if not brandstof:
-                    brandstof = rdw_data.get("brandstof") or ""
+if merk and model:
+    try:
+        rdw_data = estimate_vehicle_data_from_rdw(
+            merk=merk,
+            model=model,
+            type_model=type_model,
+            bouwjaar=bouwjaar,
+        )
 
-                if not gewicht:
-                    gewicht = rdw_data.get("gewicht") or ""
+        if rdw_data is None:
+            rdw_data = {}
 
-                rdw_catalogus = rdw_data.get("cataloguswaarde") or ""
+        if not isinstance(rdw_data, dict):
+            print("RDW gaf geen dictionary terug:", rdw_data)
+            rdw_data = {}
 
-                if not catalogus_part:
-                    catalogus_part = rdw_catalogus
+    except Exception as e:
+        print("RDW-schatting volledig overgeslagen door fout:", repr(e))
+        rdw_data = {}
 
-                if not catalogus_zak:
-                    catalogus_zak = rdw_catalogus
+if rdw_data:
+    if not brandstof:
+        brandstof = rdw_data.get("brandstof") or ""
 
-                if not catalogus_legacy:
-                    catalogus_legacy = rdw_catalogus
+    if not gewicht:
+        gewicht = rdw_data.get("gewicht") or ""
 
-                rdw_voertuig_type = rdw_data.get("voertuig_type") or ""
-                if rdw_voertuig_type in ("personenauto", "bestelauto"):
-                    voertuig_type = rdw_voertuig_type
+    rdw_catalogus = rdw_data.get("cataloguswaarde") or ""
 
-                print("RDW schatting:", rdw_data)
+    if not catalogus_part:
+        catalogus_part = rdw_catalogus
 
+    if not catalogus_zak:
+        catalogus_zak = rdw_catalogus
+
+    if not catalogus_legacy:
+        catalogus_legacy = rdw_catalogus
+
+    rdw_voertuig_type = rdw_data.get("voertuig_type") or ""
+    if rdw_voertuig_type in ("personenauto", "bestelauto"):
+        voertuig_type = rdw_voertuig_type
+
+print("RDW resultaat veilig verwerkt:", rdw_data)
             except Exception as e:
                 print("RDW-schatting mislukt:", e)
 

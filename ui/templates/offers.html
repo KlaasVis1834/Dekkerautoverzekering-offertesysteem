@@ -91,6 +91,7 @@
         <option value="all" {% if delivery=="all" %}selected{% endif %}>Alles</option>
         <option value="nieuw" {% if delivery=="nieuw" %}selected{% endif %}>Nieuw</option>
         <option value="email_klaar" {% if delivery=="email_klaar" %}selected{% endif %}>E-mail klaar</option>
+        <option value="outlook_concept_klaar" {% if delivery=="outlook_concept_klaar" %}selected{% endif %}>Outlook concept klaar</option>
         <option value="post_klaar" {% if delivery=="post_klaar" %}selected{% endif %}>Post klaar</option>
         <option value="geblokkeerd" {% if delivery=="geblokkeerd" %}selected{% endif %}>Geblokkeerd</option>
       </select>
@@ -113,6 +114,7 @@
   </tr>
 
   {% for r in rows %}
+  {% set persoonlijke_aanvraag_link = "https://www.klaasvis.nl/aanvraagformulier/?offer_no=" ~ r["offer_no"] %}
   <tr>
     <td>
       <div><b>{{ r["offer_no"] }}</b></div>
@@ -136,6 +138,16 @@
       <div class="muted small">Regio: <b>{{ r["regio"] or "—" }}</b></div>
       <div class="muted small">{{ r["email"] or "—" }}</div>
       <div class="muted small">{{ r["telefoon"] or "—" }}</div>
+
+      {% if r["aanvraag_ontvangen_at"] %}
+        <div class="offer-meta">
+          <div class="pill ok">Aanvraag ontvangen</div>
+          <div class="muted small" style="margin-top:6px;">
+            {{ r["aanvraag_ontvangen_at"] }}<br>
+            {{ r["aanvraag_naam"] or r["klantnaam"] or "" }}
+          </div>
+        </div>
+      {% endif %}
     </td>
 
     <td>
@@ -221,12 +233,19 @@
     </td>
 
     <td>
-      {% if r["is_blocked"] %}
+      {% if r["aanvraag_ontvangen_at"] %}
+        <div class="pill ok">Aanvraag ontvangen</div>
+        <div class="muted small" style="margin-top:6px;">
+          Status: <b>{{ r["aanvraag_status"] or "nieuw" }}</b>
+        </div>
+      {% elif r["is_blocked"] %}
         <div class="pill bad">Geblokkeerd</div>
         <div class="muted small" style="margin-top:6px;">{{ r["block_reason"] or "—" }}</div>
       {% else %}
         {% if (r["delivery_status"] or "") == "email_klaar" %}
           <div class="pill ok">E-mail klaar</div>
+        {% elif (r["delivery_status"] or "") == "outlook_concept_klaar" %}
+          <div class="pill ok">Outlook concept klaar</div>
         {% elif (r["delivery_status"] or "") == "post_klaar" %}
           <div class="pill ok">Post klaar</div>
         {% else %}
@@ -240,6 +259,7 @@
           <option value="open" {% if (r["decision_status"] or "")=="open" %}selected{% endif %}>Open</option>
           <option value="akkoord" {% if (r["decision_status"] or "")=="akkoord" %}selected{% endif %}>Akkoord</option>
           <option value="niet_akkoord" {% if (r["decision_status"] or "")=="niet_akkoord" %}selected{% endif %}>Niet akkoord</option>
+          <option value="aanvraag_ontvangen" {% if (r["decision_status"] or "")=="aanvraag_ontvangen" %}selected{% endif %}>Aanvraag ontvangen</option>
         </select>
         <button class="btn" type="submit">Beslissing</button>
       </form>
@@ -251,6 +271,16 @@
           <input type="hidden" name="next" value="{{ request.full_path }}">
           <button class="btn ok" type="submit">Export</button>
         </form>
+
+        <a class="btn primary" href="{{ persoonlijke_aanvraag_link }}" target="_blank" rel="noopener">
+          Aanvraaglink
+        </a>
+
+        {% if r["aanvraag_ontvangen_at"] %}
+          <a class="btn ok" href="{{ url_for('applications') }}">
+            Bekijk aanvraag
+          </a>
+        {% endif %}
 
         {% if r["offer_pdf_path"] %}
           <a class="btn" href="{{ url_for('get_file') }}?path={{ r['offer_pdf_path'] }}">PDF</a>
@@ -277,6 +307,7 @@
 
 <div class="offers-mobile">
   {% for r in rows %}
+    {% set persoonlijke_aanvraag_link = "https://www.klaasvis.nl/aanvraagformulier/?offer_no=" ~ r["offer_no"] %}
     <div class="mobile-offer-card">
       <div class="row" style="justify-content:space-between;">
         <div>
@@ -286,11 +317,15 @@
         </div>
 
         <div>
-          {% if r["is_blocked"] %}
+          {% if r["aanvraag_ontvangen_at"] %}
+            <div class="pill ok">Aanvraag ontvangen</div>
+          {% elif r["is_blocked"] %}
             <div class="pill bad">Geblokkeerd</div>
           {% else %}
             {% if (r["delivery_status"] or "") == "email_klaar" %}
               <div class="pill ok">E-mail klaar</div>
+            {% elif (r["delivery_status"] or "") == "outlook_concept_klaar" %}
+              <div class="pill ok">Outlook concept klaar</div>
             {% elif (r["delivery_status"] or "") == "post_klaar" %}
               <div class="pill ok">Post klaar</div>
             {% else %}
@@ -311,6 +346,17 @@
         <div class="muted small">Regio: <b>{{ r["regio"] or "—" }}</b></div>
         <div class="muted small">{{ r["email"] or "—" }}</div>
         <div class="muted small">{{ r["telefoon"] or "—" }}</div>
+
+        {% if r["aanvraag_ontvangen_at"] %}
+          <div class="offer-meta">
+            <div class="pill ok">Aanvraag ontvangen</div>
+            <div class="muted small" style="margin-top:6px;">
+              {{ r["aanvraag_ontvangen_at"] }}<br>
+              {{ r["aanvraag_naam"] or r["klantnaam"] or "" }}<br>
+              Status: <b>{{ r["aanvraag_status"] or "nieuw" }}</b>
+            </div>
+          </div>
+        {% endif %}
       </div>
 
       <div class="mobile-section">
@@ -388,7 +434,14 @@
       <div class="mobile-section">
         <h4>Status</h4>
 
-        {% if r["is_blocked"] %}
+        {% if r["aanvraag_ontvangen_at"] %}
+          <div class="pill ok">Aanvraag ontvangen</div>
+          <div class="muted small" style="margin-top:6px;">
+            {{ r["aanvraag_ontvangen_at"] }}<br>
+            {{ r["aanvraag_naam"] or r["klantnaam"] or "" }}<br>
+            Status: <b>{{ r["aanvraag_status"] or "nieuw" }}</b>
+          </div>
+        {% elif r["is_blocked"] %}
           <div class="muted small">{{ r["block_reason"] or "—" }}</div>
         {% endif %}
 
@@ -398,6 +451,7 @@
             <option value="open" {% if (r["decision_status"] or "")=="open" %}selected{% endif %}>Open</option>
             <option value="akkoord" {% if (r["decision_status"] or "")=="akkoord" %}selected{% endif %}>Akkoord</option>
             <option value="niet_akkoord" {% if (r["decision_status"] or "")=="niet_akkoord" %}selected{% endif %}>Niet akkoord</option>
+            <option value="aanvraag_ontvangen" {% if (r["decision_status"] or "")=="aanvraag_ontvangen" %}selected{% endif %}>Aanvraag ontvangen</option>
           </select>
           <button class="btn" type="submit">Beslissing opslaan</button>
         </form>
@@ -418,6 +472,16 @@
             <input type="hidden" name="next" value="{{ request.full_path }}">
             <button class="btn ok" type="submit">Export</button>
           </form>
+
+          <a class="btn primary" href="{{ persoonlijke_aanvraag_link }}" target="_blank" rel="noopener">
+            Aanvraaglink openen
+          </a>
+
+          {% if r["aanvraag_ontvangen_at"] %}
+            <a class="btn ok" href="{{ url_for('applications') }}">
+              Bekijk aanvraag
+            </a>
+          {% endif %}
 
           {% if r["offer_pdf_path"] %}
             <a class="btn" href="{{ url_for('get_file') }}?path={{ r['offer_pdf_path'] }}">PDF openen</a>
@@ -441,6 +505,7 @@
     </div>
   {% endfor %}
 </div>
+
 <div style="height:14px"></div>
 
 <div class="card">
@@ -465,6 +530,7 @@
     </div>
   </div>
 </div>
+
 <script>
 async function npSearch(offerNo, q){
   const sel = document.getElementById("np_select_" + offerNo);

@@ -2113,7 +2113,7 @@ def _build_pdf_and_delivery(conn, r, now: datetime):
     return {
         "kind": "post",
         "pdf": offer_pdf_path,
-        "post": post_letter_path,
+        "post": post_package_path,
     }
 
 

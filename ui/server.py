@@ -1228,11 +1228,17 @@ def delete_offer(offer_no: str):
                 except Exception:
                     pass
 
-        _execute_retry(conn, "DELETE FROM offers WHERE offer_no = %s", (offer_no,))
+        cur = _execute_retry(conn, "DELETE FROM offers WHERE offer_no = %s", (offer_no,))
+        deleted = getattr(cur, "rowcount", 0)
         conn.commit()
 
-    flash(f"Offerte verwijderd: {offer_no}", "ok")
+    if deleted:
+        flash(f"Offerte verwijderd: {offer_no}", "ok")
+    else:
+        flash(f"Offerte niet verwijderd: {offer_no} niet gevonden.", "error")
+
     return redirect(url_for("offers"))
+
 
 
 @app.get("/offer/<offer_no>/download-postbrief")

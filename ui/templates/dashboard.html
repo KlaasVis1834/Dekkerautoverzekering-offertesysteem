@@ -26,25 +26,6 @@
     <span class="badge">Database</span>
   </div>
 
-  <div class="kpi">
-    <div>
-      <div class="t">Klaar voor verzending</div>
-      <div class="n">{{ open_deliveries }}</div>
-    </div>
-    <span class="badge">Email/Post</span>
-  </div>
-</div>
-<div class="card">
-  <div class="muted small">Nieuwe aanvragen</div>
-  <div style="font-size:32px; font-weight:900;">
-    {{ nieuwe_aanvragen or 0 }}
-  </div>
-  <a class="btn primary" href="{{ url_for('aanvragen') }}">
-    Bekijk aanvragen
-  </a>
-</div>
-<div style="height:14px"></div>
-
 <div class="card">
   <div class="row" style="justify-content:space-between">
     <div>

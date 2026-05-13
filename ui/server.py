@@ -1291,7 +1291,7 @@ def download_postbrief(offer_no: str):
             WHERE offer_no = %s
             """,
             (
-                post_letter_path
+                post_letter_path,
                 current_user_display(),
                 datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
                 offer_no,

@@ -301,16 +301,21 @@ def import_excel(excel_path: str, denylist_path: str | None = None) -> int:
     return processed
 
 
-def get_last_batch_id() -> str | None:
+def get_last_batch_id():
+    from ui.server import connect, ensure_db
+
+    ensure_db()
+
     with connect() as conn:
-        r = conn.execute(
+        row = conn.execute(
             """
             SELECT batch_id
             FROM offers
-            WHERE batch_id IS NOT NULL AND batch_id != ''
-            ORDER BY created_at DESC
+            WHERE batch_id IS NOT NULL
+              AND batch_id != ''
+            ORDER BY created_at DESC, offer_no DESC
             LIMIT 1
             """
         ).fetchone()
 
-        return r["batch_id"] if r else None
+    return row["batch_id"] if row else None

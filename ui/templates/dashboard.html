@@ -4,7 +4,9 @@
 <div class="card">
   <div class="row" style="justify-content:space-between; align-items:center;">
     <div>
-      <h3 style="margin:0">Welkom {{ session.get("display_name") or session.get("username") }}</h3>
+      <h3 style="margin:0">
+        Welkom {{ session.get("display_name") or session.get("username") }}
+      </h3>
       <div class="muted small">Rol: {{ session.get("role") }}</div>
     </div>
 
@@ -18,6 +20,7 @@
 <div style="height:14px"></div>
 
 <div class="grid grid-2">
+  <!-- KPI: Totaal offertes -->
   <div class="kpi">
     <div>
       <div class="t">Totaal offertes</div>
@@ -26,10 +29,41 @@
     <span class="badge">Database</span>
   </div>
 
+  <!-- KPI: Open leveringen -->
+  <div class="kpi">
+    <div>
+      <div class="t">Open leveringen</div>
+      <div class="n">{{ open_deliveries }}</div>
+    </div>
+    <span class="badge">Te verwerken</span>
+  </div>
+
+  <!-- KPI: Geblokkeerd -->
+  <div class="kpi">
+    <div>
+      <div class="t">Geblokkeerd</div>
+      <div class="n">{{ blocked }}</div>
+    </div>
+    <span class="badge">Denylist</span>
+  </div>
+
+  <!-- KPI: Nieuwe aanvragen -->
+  <div class="kpi">
+    <div>
+      <div class="t">Nieuwe aanvragen</div>
+      <div class="n">{{ new_applications or 0 }}</div>
+    </div>
+    <span class="badge">EmailJS</span>
+  </div>
+</div>
+
+<div style="height:14px"></div>
+
 <div class="card">
-  <div class="row" style="justify-content:space-between">
+  <div class="row" style="justify-content:space-between; flex-wrap:wrap; gap:12px;">
     <div>
       <h3 style="margin:0">Acties</h3>
+
       <div class="muted small">
         Denylist:
         {% if denylist_exists %}
@@ -40,21 +74,64 @@
       </div>
 
       {% if last_batch_id %}
-        <div class="muted small">Laatste batch: <b>{{ last_batch_id }}</b></div>
+        <div class="muted small">
+          Laatste batch: <b>{{ last_batch_id }}</b>
+        </div>
       {% endif %}
+
+      <div class="muted small">
+        Database: <b>{{ db_path }}</b>
+      </div>
     </div>
 
-    <div class="row">
-      <a class="btn primary" href="{{ url_for('import_page') }}">Import Excel</a>
+    <div class="row" style="flex-wrap:wrap;">
+      <a class="btn primary" href="{{ url_for('import_page') }}">
+        Import Excel
+      </a>
 
-      <form method="post" action="{{ url_for('export_last_batch') }}">
-        <button class="btn ok" type="submit">Export laatste batch</button>
+      <form method="post"
+            action="{{ url_for('export_last_batch') }}"
+            style="display:inline;">
+        <button class="btn ok" type="submit">
+          Export laatste batch
+        </button>
       </form>
 
-      <a class="btn" href="{{ url_for('offers') }}">Naar offertes</a>
+      <a class="btn" href="{{ url_for('offers') }}">
+        Naar offertes
+      </a>
+
+      <a class="btn" href="{{ url_for('no_plate') }}">
+        No-plate voertuigen
+      </a>
+
+      <a class="btn" href="{{ url_for('browse', kind='offers') }}">
+        PDF's
+      </a>
+
+      <a class="btn" href="{{ url_for('browse', kind='outbox') }}">
+        Outbox
+      </a>
+
+      <a class="btn" href="{{ url_for('browse', kind='post') }}">
+        Post
+      </a>
+
+      <a class="btn" href="{{ url_for('browse', kind='inbox') }}">
+        Inbox
+      </a>
+
+      <a class="btn ok" href="{{ url_for('applications') }}">
+        Aanvragen
+      </a>
+
+      {% if session.get("role") == "admin" %}
+        <a class="btn" href="{{ url_for('admin_users') }}">
+          Gebruikersbeheer
+        </a>
+      {% endif %}
     </div>
   </div>
-
 </div>
 
 {% endblock %}

@@ -1976,6 +1976,8 @@ def _build_pdf_and_delivery(conn, r, now: datetime):
                 "aanvraag_link": AANVRAAG_LINK,
                 "revision_no": revision_no,
                 "revision_of": r["revision_of"] or "",
+                "svj_override": r["svj_override"] if r["svj_override"] is not None else "",
+                "heeft_svj_override": r["svj_override"] is not None,
                 "logo_url": logo_url,
             },
         )

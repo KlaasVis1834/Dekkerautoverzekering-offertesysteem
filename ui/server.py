@@ -607,8 +607,35 @@ def safe_relpath(p: Path) -> str:
         return str(p.relative_to(PROJECT_ROOT)).replace("\\", "/")
     except Exception:
         return str(p).replace("\\", "/")
+        
+def combine_post_package_pdf(post_letter_path: str, offer_pdf_path: str, offer_no: str, klantnaam: str) -> str:
+    post_abs = (PROJECT_ROOT / post_letter_path).resolve()
+    offer_abs = (PROJECT_ROOT / offer_pdf_path).resolve()
 
+    if not post_abs.exists():
+        raise RuntimeError("Postbrief niet gevonden voor postpakket.")
 
+    if not offer_abs.exists():
+        raise RuntimeError("Offerte-PDF niet gevonden voor postpakket.")
+
+    out_dir = PROJECT_ROOT / "data" / "post"
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    filename = _safe_filename(f"Postpakket_{_short_offer_no_for_filename(offer_no)}_{klantnaam or 'klant'}.pdf")
+    out_abs = out_dir / filename
+
+    writer = PdfWriter()
+
+    for pdf_abs in [post_abs, offer_abs]:
+        reader = PdfReader(str(pdf_abs))
+        for page in reader.pages:
+            writer.add_page(page)
+
+    with out_abs.open("wb") as f:
+        writer.write(f)
+
+    return safe_relpath(out_abs)
+    
 def _parse_float(v):
     if v is None:
         return None

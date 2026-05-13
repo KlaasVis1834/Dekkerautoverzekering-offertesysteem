@@ -232,8 +232,9 @@ def fetch_rolls_vehicle_text(kenteken: str) -> str:
 
     php_sessid = _safe_str(os.getenv(ROLLS_SESSION_COOKIE_ENV))
     if php_sessid:
+        s.cookies.set("SSIDPHP", php_sessid, domain="vergelijken.rolls.nl")
         s.cookies.set("PHPSESSID", php_sessid, domain="vergelijken.rolls.nl")
-        _dbg("PHPSESSID handmatig gezet")
+        _dbg("SSIDPHP en PHPSESSID handmatig gezet")
 
     token_url = _safe_str(os.getenv(ROLLS_TOKEN_ENV))
     if token_url:

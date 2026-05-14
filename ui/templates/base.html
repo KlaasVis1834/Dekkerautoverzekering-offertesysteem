@@ -493,7 +493,7 @@
       </a>
 
       <a class="navlink" href="{{ url_for('no_plate') }}">Zonder kenteken</a>
-
+      <a class="navlink" href="{{ url_for('export_backup_page') }}">Export</a>
       {% if session.get("role") == "admin" %}
         <a class="navlink" href="{{ url_for('admin_users') }}">Gebruikers</a>
       {% endif %}

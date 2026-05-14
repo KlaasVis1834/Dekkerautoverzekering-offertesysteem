@@ -331,6 +331,8 @@ def ensure_db():
 
 @app.route("/login", methods=["GET", "POST"])
 def login():
+    session.pop("_flashes", None)
+    session.modified = True
     ensure_db()
 
     if session.get("logged_in"):
@@ -392,6 +394,8 @@ def clear_flashes():
 @app.route("/account", methods=["GET", "POST"])
 @login_required
 def account():
+    session.pop("_flashes", None)
+    session.modified = True
     ensure_db()
 
     if request.method == "POST":
@@ -924,6 +928,8 @@ def inject_application_counts():
 @app.route("/")
 @login_required
 def dashboard():
+    session.pop("_flashes", None)
+    session.modified = True
     ensure_db()
     last_batch_id = get_last_batch_id()
 
@@ -958,6 +964,8 @@ def followups():
 @app.route("/import", methods=["GET", "POST"])
 @login_required
 def import_page():
+    session.pop("_flashes", None)
+    session.modified = True
     ensure_db()
 
     inbox_dir = PROJECT_ROOT / "data" / "inbox"
@@ -1043,6 +1051,8 @@ def import_page():
 @app.route("/offers")
 @login_required
 def offers():
+    session.pop("_flashes", None)
+    session.modified = True
     ensure_db()
 
     q = request.args.get("q", "").strip()
@@ -1172,6 +1182,8 @@ def blocked():
 @app.route("/applications", endpoint="applications")
 @login_required
 def aanvragen():
+    session.pop("_flashes", None)
+    session.modified = True
     ensure_db()
 
     try:
@@ -1206,8 +1218,14 @@ def aanvragen():
     return render_template("aanvragen.html", rows=rows)
 
 
-@app.post("/api/aanvraag-ontvangen")
+@app.route("/api/aanvraag", methods=["POST", "OPTIONS"])
 def api_aanvraag_ontvangen():
+    if request.method == "OPTIONS":
+        response = jsonify({"ok": True})
+        response.headers["Access-Control-Allow-Origin"] = "https://www.klaasvis.nl"
+        response.headers["Access-Control-Allow-Headers"] = "Content-Type, X-Aanvraag-Secret"
+        response.headers["Access-Control-Allow-Methods"] = "POST, OPTIONS"
+        return response
     ensure_db()
 
     if AANVRAAG_API_SECRET:
@@ -1319,7 +1337,9 @@ def api_aanvraag_ontvangen():
 
         conn.commit()
 
-    return jsonify({"ok": True, "offer_no": offer_no, "json_path": json_path})
+    response = jsonify({"ok": True, "offer_no": offer_no, "json_path": json_path})
+    response.headers["Access-Control-Allow-Origin"] = "https://www.klaasvis.nl"
+    return response
 
 
 @app.post("/offer/<offer_no>/update-meta")
@@ -1576,6 +1596,8 @@ def download_postbrief(offer_no: str):
 @app.route("/no-plate", methods=["GET", "POST"])
 @login_required
 def no_plate():
+    session.pop("_flashes", None)
+    session.modified = True
     ensure_db()
 
     if request.method == "POST":
@@ -1743,6 +1765,8 @@ def no_plate():
 @app.post("/no-plate/<int:vid>/delete")
 @login_required
 def no_plate_delete(vid: int):
+    session.pop("_flashes", None)
+    session.modified = True
     ensure_db()
 
     session.pop("_flashes", None)

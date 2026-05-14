@@ -1,0 +1,175 @@
+{% extends "base.html" %}
+{% block content %}
+
+<div class="card">
+  <div class="row" style="justify-content:space-between; align-items:center;">
+    <div>
+      <h3 style="margin:0">Aanvraagdetails</h3>
+      <div class="muted small">
+        Volledig overzicht van het ingediende aanvraagformulier.
+      </div>
+    </div>
+
+    <div class="row">
+      <a class="btn" href="{{ url_for('applications') }}">← Terug naar aanvragen</a>
+
+      {% if r["offer_no"] %}
+        <a class="btn primary"
+           href="{{ url_for('offers', q=r['offer_no']) }}">
+          Open offerte
+        </a>
+      {% endif %}
+    </div>
+  </div>
+</div>
+
+<div style="height:14px"></div>
+
+<!-- Algemene gegevens -->
+<div class="card">
+  <h4 style="margin-top:0;">Algemene gegevens</h4>
+
+  <table>
+    <tr>
+      <th style="width:240px;">Offertenummer</th>
+      <td>{{ r["offer_no"] or "—" }}</td>
+    </tr>
+    <tr>
+      <th>Klantnaam</th>
+      <td>{{ r["naam"] or r["klantnaam"] or "—" }}</td>
+    </tr>
+    <tr>
+      <th>E-mailadres</th>
+      <td>{{ r["email"] or "—" }}</td>
+    </tr>
+    <tr>
+      <th>Telefoonnummer</th>
+      <td>{{ r["telefoon"] or "—" }}</td>
+    </tr>
+    <tr>
+      <th>Status</th>
+      <td>
+        {% if (r["status"] or "nieuw") == "nieuw" %}
+          <span class="pill warn">Nieuw</span>
+        {% elif (r["status"] or "") == "afgehandeld" %}
+          <span class="pill ok">Afgehandeld</span>
+        {% else %}
+          <span class="pill">{{ r["status"] or "—" }}</span>
+        {% endif %}
+      </td>
+    </tr>
+    <tr>
+      <th>Ontvangen op</th>
+      <td>{{ r["created_at"] or "—" }}</td>
+    </tr>
+    <tr>
+      <th>Laatst bijgewerkt</th>
+      <td>{{ r["updated_at"] or "—" }}</td>
+    </tr>
+    <tr>
+      <th>Kenteken</th>
+      <td>{{ r["kenteken"] or "—" }}</td>
+    </tr>
+    <tr>
+      <th>Voertuig</th>
+      <td>
+        {{ r["merk"] or "" }}
+        {{ r["model"] or "" }}
+        {{ r["type_model"] or "" }}
+      </td>
+    </tr>
+  </table>
+</div>
+
+<div style="height:14px"></div>
+
+<!-- Ingediende formuliergegevens -->
+<div class="card">
+  <h4 style="margin-top:0;">Ingediende formuliergegevens</h4>
+
+  {% if details and details|length > 0 %}
+    <table>
+      <tr>
+        <th style="width:260px;">Veld</th>
+        <th>Waarde</th>
+      </tr>
+
+      {% for key, value in details.items() %}
+        {% if value is not none and value|string|trim != "" %}
+          <tr>
+            <td>
+              <strong>
+                {{ key
+                  | replace('_', ' ')
+                  | replace('-', ' ')
+                  | title }}
+              </strong>
+            </td>
+            <td style="white-space:pre-wrap;">
+              {% if value is mapping or value is sequence and value is not string %}
+                <pre style="margin:0; white-space:pre-wrap; font-family:inherit;">{{ value | tojson(indent=2) }}</pre>
+              {% else %}
+                {{ value }}
+              {% endif %}
+            </td>
+          </tr>
+        {% endif %}
+      {% endfor %}
+    </table>
+  {% else %}
+    <div class="muted">
+      Geen aanvullende formuliergegevens beschikbaar.
+    </div>
+  {% endif %}
+</div>
+
+<div style="height:14px"></div>
+
+<!-- Bestanden -->
+<div class="card">
+  <h4 style="margin-top:0;">Bestanden</h4>
+
+  <div class="row">
+    {% if r["pdf_path"] %}
+      <a class="btn"
+         href="{{ url_for('get_file') }}?path={{ r['pdf_path'] }}">
+        Open PDF
+      </a>
+    {% endif %}
+
+    {% if r["json_path"] %}
+      <a class="btn"
+         href="{{ url_for('get_file') }}?path={{ r['json_path'] }}">
+        Open JSON
+      </a>
+    {% endif %}
+  </div>
+</div>
+
+<div style="height:14px"></div>
+
+<!-- Acties -->
+<div class="card">
+  <h4 style="margin-top:0;">Acties</h4>
+
+  <div class="row">
+    {% if (r["status"] or "nieuw") == "nieuw" %}
+      <form method="post"
+            action="{{ url_for('complete_application', application_id=r['id']) }}"
+            style="margin:0;">
+        <button type="submit" class="btn ok">
+          Markeer als afgehandeld
+        </button>
+      </form>
+    {% endif %}
+
+    {% if r["offer_no"] %}
+      <a class="btn primary"
+         href="{{ url_for('offers', q=r['offer_no']) }}">
+        Open gekoppelde offerte
+      </a>
+    {% endif %}
+  </div>
+</div>
+
+{% endblock %}

@@ -373,10 +373,11 @@ def logout():
     return redirect(url_for("login"))
 
 
-@app.route("/clear-flashes")
+@app.route("/clear-flashes", methods=["GET", "POST"])
 @login_required
 def clear_flashes():
     session.pop("_flashes", None)
+    session.modified = True
     return redirect(url_for("dashboard"))
 
 

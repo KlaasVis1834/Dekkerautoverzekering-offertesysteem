@@ -501,14 +501,20 @@
   </div>
 </header>
 
-<div class="wrap">
-  {% with messages = get_flashed_messages(with_categories=true) %}
-    {% if messages %}
-      {% for category, msg in messages %}
-        <div class="flash {{ category }}">{{ msg }}</div>
+{% with messages = get_flashed_messages(with_categories=true) %}
+  {% if messages %}
+    <div id="flashBox">
+      {% for category, msg in messages[-1:] %}
+        <div class="flash {{ category }}">
+          <span>{{ msg }}</span>
+          <button type="button" onclick="this.closest('.flash').remove();" style="float:right;border:0;background:transparent;font-weight:900;cursor:pointer;font-size:18px;">
+            ×
+          </button>
+        </div>
       {% endfor %}
-    {% endif %}
-  {% endwith %}
+    </div>
+  {% endif %}
+{% endwith %}
 
   {% block content %}{% endblock %}
 </div>
@@ -518,6 +524,15 @@
       window.location.reload();
     }
   });
+
+  function clearFlashesOnServer() {
+    fetch("{{ url_for('clear_flashes') }}", {
+      method: "POST",
+      credentials: "same-origin"
+    }).catch(function () {});
+  }
+
+  clearFlashesOnServer();
 
   setTimeout(function () {
     document.querySelectorAll(".flash").forEach(function (el) {
@@ -529,10 +544,7 @@
       }, 300);
     });
 
-    fetch("{{ url_for('clear_flashes') }}", {
-      method: "POST",
-      credentials: "same-origin"
-    }).catch(function () {});
+    clearFlashesOnServer();
   }, 3000);
 </script>
 </body>

@@ -262,7 +262,7 @@ def import_excel(excel_path: str, denylist_path: str | None = None) -> int:
                     %s, %s, %s, %s,
                     %s, %s,
                     %s, %s, %s,
-                    'open', 'onbekend', %s,
+                    'open', 'open', %s,
                     'auto'
                 )
                 """,
@@ -302,10 +302,6 @@ def import_excel(excel_path: str, denylist_path: str | None = None) -> int:
 
 
 def get_last_batch_id():
-    from ui.server import connect, ensure_db
-
-    ensure_db()
-
     with connect() as conn:
         row = conn.execute(
             """
@@ -319,3 +315,4 @@ def get_last_batch_id():
         ).fetchone()
 
     return row["batch_id"] if row else None
+

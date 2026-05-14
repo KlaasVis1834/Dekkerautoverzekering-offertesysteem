@@ -2278,9 +2278,13 @@ def _build_pdf_and_delivery(conn, r, now: datetime):
                 "meldcode": meldcode_final,
                 "is_schatting": "1" if getattr(vinfo, "is_schatting", False) else "",
                 "schatting_toelichting": getattr(vinfo, "schatting_toelichting", "") or "",
-                "premie_maand": r["maandpremie"],
-                "svj_override": r["svj_override"],
-            },
+                "premie_maand": _premie_met_svj_correctie(
+                   maandpremie=r["maandpremie"],
+                   svj_override=r["svj_override"],
+                   klant_type=klant_type,
+                   voertuig_type=voertuig_type,
+                   regio=r["regio"],
+        ),
             filename_base=_offer_pdf_filename_base(r["klantnaam"] or "", klant_type, offer_no),
         )
 

@@ -712,7 +712,32 @@ def _parse_int(v):
         return int(float(s))
     except Exception:
         return None
+def _premie_met_svj_correctie(
+    maandpremie,
+    svj_override,
+    klant_type,
+    voertuig_type,
+    regio,
+):
+    if maandpremie is None:
+        return None
 
+    if svj_override is None or str(svj_override).strip() == "":
+        return maandpremie
+
+    try:
+        resultaat = herbereken_premie_op_svj(
+            premie_bij_75_incl=float(maandpremie),
+            schadevrije_jaren=svj_override,
+            klant_type=klant_type,
+            voertuig_type=voertuig_type,
+            regio=regio,
+        )
+        return resultaat["premie_incl"]
+    
+    except Exception as e:
+        print("SVJ premiecorrectie overgeslagen:", repr(e))
+        return maandpremie
 
 def _load_template_safe(rel_path: str):
     try:

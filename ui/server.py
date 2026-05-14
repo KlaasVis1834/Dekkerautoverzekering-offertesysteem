@@ -12,6 +12,8 @@ from functools import wraps
 from pathlib import Path
 from datetime import datetime
 from pypdf import PdfReader, PdfWriter
+import csv
+from io import StringIO
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 if str(PROJECT_ROOT) not in sys.path:
@@ -2715,7 +2717,91 @@ def browse(kind: str):
 
     return render_template("browse.html", kind=kind, base=str(base), items=items)
 
+@app.route("/export-backup")
+@login_required
+def export_backup_page():
+    return render_template("export_backup.html")
 
+
+@app.get("/export-backup/download")
+@login_required
+def export_backup_download():
+    ensure_db()
+
+    export_type = (request.args.get("type") or "offers").strip()
+    period = (request.args.get("period") or "month").strip()
+    value = (request.args.get("value") or "").strip()
+
+    if export_type not in ("offers", "applications"):
+        flash("Ongeldig exporttype.", "error")
+        return redirect(url_for("export_backup_page"))
+
+    if period not in ("month", "week"):
+        flash("Ongeldige periode.", "error")
+        return redirect(url_for("export_backup_page"))
+
+    if not value:
+        flash("Kies eerst een maand of week.", "error")
+        return redirect(url_for("export_backup_page"))
+
+    where_sql = ""
+    params = []
+
+    if period == "month":
+        where_sql = "WHERE LEFT(created_at, 7) = %s"
+        params.append(value)
+        filename_period = value
+    else:
+        try:
+            year, week = value.split("-W")
+            start_date = datetime.fromisocalendar(int(year), int(week), 1)
+            end_date = datetime.fromisocalendar(int(year), int(week), 7)
+        except Exception:
+            flash("Ongeldige week.", "error")
+            return redirect(url_for("export_backup_page"))
+
+        where_sql = "WHERE created_at >= %s AND created_at <= %s"
+        params.append(start_date.strftime("%Y-%m-%d 00:00:00"))
+        params.append(end_date.strftime("%Y-%m-%d 23:59:59"))
+        filename_period = value
+
+    output = StringIO()
+    writer = csv.writer(output, delimiter=";")
+
+    with connect() as conn:
+        if export_type == "offers":
+            rows = conn.execute(
+                f"SELECT * FROM offers {where_sql} ORDER BY created_at DESC",
+                tuple(params),
+            ).fetchall()
+        else:
+            rows = conn.execute(
+                f"SELECT * FROM applications {where_sql} ORDER BY created_at DESC",
+                tuple(params),
+            ).fetchall()
+
+    if rows:
+        headers = list(rows[0].keys())
+        writer.writerow(headers)
+
+        for row in rows:
+            writer.writerow([row.get(h, "") for h in headers])
+    else:
+        writer.writerow(["Geen gegevens gevonden"])
+
+    csv_data = output.getvalue()
+    output.close()
+
+    filename_type = "offertes" if export_type == "offers" else "aanvragen"
+    filename = f"backup_{filename_type}_{filename_period}.csv"
+
+    response = app.response_class(
+        csv_data,
+        mimetype="text/csv; charset=utf-8",
+    )
+    response.headers["Content-Disposition"] = f"attachment; filename={filename}"
+    return response
+    
 if __name__ == "__main__":
     ensure_db()
     app.run(debug=True)

@@ -1471,7 +1471,6 @@ def delete_offer(offer_no: str):
 
     next_url = request.form.get("next") or url_for("offers")
 
-    # Oude meldingen wissen, zodat "offerte verwijderd" niet blijft hangen.
     session.pop("_flashes", None)
     session.modified = True
 
@@ -1486,22 +1485,22 @@ def delete_offer(offer_no: str):
                 (offer_no,),
             ).fetchone()
 
-            if not row:
-                flash(f"Offerte niet gevonden of niet verwijderd: {offer_no}", "error")
-                return redirect(next_url)
-
-            for rel in [row["offer_pdf_path"], row["eml_path"], row["post_letter_path"]]:
-                if not rel:
-                    continue
-                try:
-                    p = (PROJECT_ROOT / rel).resolve()
-                    if p.exists() and (p == PROJECT_ROOT or PROJECT_ROOT in p.parents):
-                        p.unlink()
-                except Exception as file_error:
-                    print("Bestand verwijderen overgeslagen:", repr(file_error))
+            if row:
+                for rel in [row["offer_pdf_path"], row["eml_path"], row["post_letter_path"]]:
+                    if not rel:
+                        continue
+                    try:
+                        p = (PROJECT_ROOT / rel).resolve()
+                        if p.exists() and PROJECT_ROOT in p.parents:
+                            p.unlink()
+                    except Exception as file_error:
+                        print("Bestand verwijderen overgeslagen:", repr(file_error))
 
             conn.execute(
-                "DELETE FROM applications WHERE TRIM(COALESCE(offer_no, '')) = TRIM(%s)",
+                """
+                DELETE FROM applications
+                WHERE TRIM(COALESCE(offer_no, '')) = TRIM(%s)
+                """,
                 (offer_no,),
             )
 
@@ -1516,16 +1515,15 @@ def delete_offer(offer_no: str):
 
             conn.commit()
 
-        # Geen succes-flash meer: de actie is klaar en de melding hoeft niet te blijven staan.
         if not deleted:
-            flash(f"Offerte niet gevonden of niet verwijderd: {offer_no}", "error")
+            flash(f"Offerte bestaat niet meer of was al verwijderd: {offer_no}", "ok")
 
     except Exception as e:
         print("DELETE FOUT:", repr(e))
         flash(f"Verwijderen mislukt: {type(e).__name__}: {e}", "error")
 
     return redirect(next_url)
-
+    
 @app.get("/offer/<offer_no>/download-postbrief")
 @login_required
 def download_postbrief(offer_no: str):

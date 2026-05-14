@@ -1242,7 +1242,47 @@ def aanvragen():
         rows = []
 
     return render_template("aanvragen.html", rows=rows)
+@app.get("/applications/<int:application_id>")
+@login_required
+def application_detail(application_id: int):
+    ensure_db()
 
+    with connect() as conn:
+        row = conn.execute(
+            """
+            SELECT
+                a.*,
+                o.klantnaam,
+                o.kenteken,
+                o.merk,
+                o.model,
+                o.type_model
+            FROM applications a
+            LEFT JOIN offers o
+              ON TRIM(o.offer_no) = TRIM(a.offer_no)
+            WHERE a.id = %s
+            """,
+            (application_id,),
+        ).fetchone()
+
+    if not row:
+        flash("Aanvraag niet gevonden.", "error")
+        return redirect(url_for("applications"))
+
+    details = {}
+    raw_payload = row.get("raw_payload") or ""
+
+    if raw_payload:
+        try:
+            details = json.loads(raw_payload)
+        except Exception:
+            details = {"raw_payload": raw_payload}
+
+    return render_template(
+        "aanvraag_detail.html",
+        r=row,
+        details=details,
+    )
 @app.post("/applications/<int:application_id>/complete")
 @login_required
 def complete_application(application_id: int):

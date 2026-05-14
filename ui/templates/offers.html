@@ -498,8 +498,9 @@
           {% endif %}
 
           <form method="post" action="{{ url_for('delete_offer', offer_no=r['offer_no']) }}" onsubmit="return confirm('Offerte {{ r['offer_no'] }} verwijderen?');" style="margin:0;">
+            <input type="hidden" name="next" value="{{ request.full_path }}">
             <button class="btn danger" type="submit">Verwijder</button>
-          </form>
+           </form>
         </div>
       </div>
     </div>

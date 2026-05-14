@@ -724,10 +724,13 @@ def generate_offer_pdf(
 
     y -= 6.2 * mm
 
+    # Persoonlijke aanvraaglink met offertenummer
+    aanvraag_url = f"{AANVRAAG_LINK}?offerte={offer_no}"
+
     c.setFillColor(colors.HexColor("#1F2A44"))
     c.setFont("Helvetica-Bold", 9.5)
     c.drawString(margin_x, y, "Aanvraagformulier:")
-    _link(c, margin_x + 34 * mm, y, AANVRAAG_LINK, AANVRAAG_LINK, size=9.5)
+    _link(c, margin_x + 34 * mm, y, aanvraag_url, aanvraag_url, size=9.5)
     y -= 10 * mm
 
     c.setStrokeColor(colors.HexColor("#D9DEE7"))

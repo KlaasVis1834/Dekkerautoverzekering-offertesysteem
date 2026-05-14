@@ -55,25 +55,30 @@
       </td>
 
       <td>
-        <div class="grid" style="gap:8px;">
-          {% if r["offer_no"] %}
-            <a class="btn primary" href="{{ url_for('offers', q=r['offer_no']) }}">
-              Open offerte
-            </a>
-          {% endif %}
+      <td>
+  <div class="grid" style="gap:8px;">
+    <a class="btn primary" href="{{ url_for('application_detail', application_id=r['id']) }}">
+      Details bekijken
+    </a>
 
-          {% if r["pdf_path"] %}
-            <a class="btn" href="{{ url_for('get_file') }}?path={{ r['pdf_path'] }}">
-              PDF
-            </a>
-          {% endif %}
+    {% if r["offer_no"] %}
+      <a class="btn" href="{{ url_for('offers', q=r['offer_no']) }}">
+        Open offerte
+      </a>
+    {% endif %}
 
-          {% if r["json_path"] %}
-            <a class="btn" href="{{ url_for('get_file') }}?path={{ r['json_path'] }}">
-              JSON
-            </a>
-          {% endif %}
+    {% if r["pdf_path"] %}
+      <a class="btn" href="{{ url_for('get_file') }}?path={{ r['pdf_path'] }}">
+        PDF
+      </a>
+    {% endif %}
 
+    {% if r["json_path"] %}
+      <a class="btn" href="{{ url_for('get_file') }}?path={{ r['json_path'] }}">
+        JSON
+      </a>
+    {% endif %}
+          
           {% if (r["status"] or "nieuw") == "nieuw" %}
             <form method="post"
                   action="{{ url_for('complete_application', application_id=r['id']) }}"

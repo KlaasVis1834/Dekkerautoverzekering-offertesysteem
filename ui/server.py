@@ -976,6 +976,7 @@ def import_page():
 
         try:
             n = import_excel(str(excel_path), deny_path)
+            flash(f"Import gelukt: {n} offertes toegevoegd.", "ok")
             batch_id = get_last_batch_id()
 
             if batch_id:

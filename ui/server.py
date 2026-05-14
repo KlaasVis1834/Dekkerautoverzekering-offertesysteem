@@ -1206,18 +1206,31 @@ def set_decision(offer_no: str):
 
 @app.post("/offer/<offer_no>/delete")
 @login_required
+@app.post("/offer/<offer_no>/delete")
+@login_required
 def delete_offer(offer_no: str):
     ensure_db()
 
+    next_url = request.form.get("next") or url_for("offers")
+
     with connect() as conn:
-        row = conn.execute(
-            "SELECT offer_pdf_path, eml_path, post_letter_path FROM offers WHERE offer_no = %s",
+        deleted = conn.execute(
+            """
+            DELETE FROM offers
+            WHERE offer_no = %s
+            RETURNING offer_no
+            """,
             (offer_no,),
         ).fetchone()
+        conn.commit()
 
-        if not row:
-            flash("Offerte niet gevonden.", "error")
-            return redirect(url_for("offers"))
+    if deleted:
+        flash(f"Offerte verwijderd: {offer_no}", "ok")
+    else:
+        flash(f"Offerte niet gevonden of niet verwijderd: {offer_no}", "error")
+
+    return redirect(next_url)
+
 
         for rel in [row["offer_pdf_path"], row["eml_path"], row["post_letter_path"]]:
             if rel:

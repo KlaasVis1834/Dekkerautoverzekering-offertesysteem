@@ -388,7 +388,11 @@ def logout():
 def clear_flashes():
     session.pop("_flashes", None)
     session.modified = True
-    return redirect(request.referrer or url_for("dashboard"))
+
+    if request.method == "GET":
+        return redirect(url_for("dashboard"))
+
+    return ("", 204)
 
 
 @app.route("/account", methods=["GET", "POST"])

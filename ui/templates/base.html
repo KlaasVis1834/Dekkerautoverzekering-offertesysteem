@@ -29,14 +29,18 @@
     body{
       margin:0;
       font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Arial;
-      background: radial-gradient(900px 450px at 10% 0%, rgba(37,99,235,.12), transparent 60%),
-                  radial-gradient(700px 450px at 90% 10%, rgba(22,163,74,.10), transparent 55%),
-                  var(--bg);
+      background:
+        radial-gradient(900px 450px at 10% 0%, rgba(37,99,235,.12), transparent 60%),
+        radial-gradient(700px 450px at 90% 10%, rgba(22,163,74,.10), transparent 55%),
+        var(--bg);
       color:var(--text);
       overflow-x:hidden;
     }
 
-    a{color:inherit; text-decoration:none}
+    a{
+      color:inherit;
+      text-decoration:none;
+    }
 
     header{
       position:sticky;
@@ -77,6 +81,26 @@
       flex:0 0 auto;
     }
 
+    .hamburger{
+      display:none;
+      width:44px;
+      height:44px;
+      border:1px solid var(--line);
+      border-radius:12px;
+      background:#fff;
+      cursor:pointer;
+      font-size:22px;
+      font-weight:900;
+      color:var(--text);
+      align-items:center;
+      justify-content:center;
+      flex:0 0 auto;
+    }
+
+    .hamburger:hover{
+      border-color:rgba(15,23,42,.18);
+    }
+
     nav{
       display:flex;
       gap:10px;
@@ -88,8 +112,8 @@
       padding:9px 12px;
       border:1px solid var(--line);
       background: rgba(255,255,255,.70);
-      border-radius: 999px;
-      color: var(--muted);
+      border-radius:999px;
+      color:var(--muted);
       font-weight:700;
       transition:.15s;
       white-space:nowrap;
@@ -130,28 +154,30 @@
     }
 
     .grid-4{
-      grid-template-columns: repeat(4, minmax(0,1fr));
+      grid-template-columns:repeat(4, minmax(0,1fr));
     }
 
     .grid-2{
-      grid-template-columns: repeat(2, minmax(0,1fr));
+      grid-template-columns:repeat(2, minmax(0,1fr));
     }
 
-    @media (max-width: 980px){
-      .grid-4{grid-template-columns: repeat(2,1fr)}
+    @media (max-width:980px){
+      .grid-4{grid-template-columns:repeat(2,1fr)}
       .grid-2{grid-template-columns:1fr}
     }
 
     .card{
-      background: var(--card);
+      background:var(--card);
       border:1px solid var(--line);
-      border-radius: var(--radius);
-      box-shadow: var(--shadow);
+      border-radius:var(--radius);
+      box-shadow:var(--shadow);
       padding:16px;
       max-width:100%;
     }
 
-    .muted{color:var(--muted)}
+    .muted{
+      color:var(--muted);
+    }
 
     .kpi{
       display:flex;
@@ -159,10 +185,10 @@
       justify-content:space-between;
       gap:10px;
       padding:16px;
-      border-radius: var(--radius);
+      border-radius:var(--radius);
       border:1px solid var(--line);
-      background: rgba(255,255,255,.85);
-      box-shadow: var(--shadow);
+      background:rgba(255,255,255,.85);
+      box-shadow:var(--shadow);
       min-width:0;
     }
 
@@ -183,8 +209,8 @@
       padding:6px 10px;
       border-radius:999px;
       border:1px solid var(--line);
-      background: rgba(15,23,42,.02);
-      color: var(--muted);
+      background:rgba(15,23,42,.02);
+      color:var(--muted);
       font-weight:800;
       white-space:nowrap;
     }
@@ -202,10 +228,10 @@
       justify-content:center;
       gap:8px;
       padding:10px 12px;
-      border-radius: 12px;
+      border-radius:12px;
       border:1px solid var(--line);
-      background: #fff;
-      color: var(--text);
+      background:#fff;
+      color:var(--text);
       font-weight:900;
       cursor:pointer;
       transition:.15s;
@@ -220,38 +246,40 @@
     }
 
     .btn.primary{
-      background: rgba(37,99,235,.12);
-      border-color: rgba(37,99,235,.25);
+      background:rgba(37,99,235,.12);
+      border-color:rgba(37,99,235,.25);
       color:#1d4ed8;
     }
 
     .btn.ok{
-      background: rgba(22,163,74,.12);
-      border-color: rgba(22,163,74,.25);
+      background:rgba(22,163,74,.12);
+      border-color:rgba(22,163,74,.25);
       color:#15803d;
     }
 
     .btn.danger{
-      background: rgba(220,38,38,.12);
-      border-color: rgba(220,38,38,.25);
+      background:rgba(220,38,38,.12);
+      border-color:rgba(220,38,38,.25);
       color:#b91c1c;
     }
 
-    input, select, textarea{
-      background: #fff;
+    input,
+    select,
+    textarea{
+      background:#fff;
       border:1px solid var(--line);
-      border-radius: 12px;
-      color: var(--text);
+      border-radius:12px;
+      color:var(--text);
       padding:10px 12px;
       outline:none;
-      min-width: 200px;
+      min-width:200px;
       max-width:100%;
       font-size:16px;
     }
 
     textarea{
       min-height:70px;
-      min-width: 320px;
+      min-width:320px;
       width:100%;
     }
 
@@ -261,11 +289,12 @@
       border-spacing:0;
       overflow:hidden;
       border:1px solid var(--line);
-      border-radius: var(--radius);
-      background: #fff;
+      border-radius:var(--radius);
+      background:#fff;
     }
 
-    th, td{
+    th,
+    td{
       padding:10px 10px;
       border-bottom:1px solid var(--line);
       vertical-align:top;
@@ -276,10 +305,12 @@
       color:var(--muted);
       text-align:left;
       font-weight:900;
-      background: rgba(15,23,42,.03);
+      background:rgba(15,23,42,.03);
     }
 
-    tr:last-child td{border-bottom:0}
+    tr:last-child td{
+      border-bottom:0;
+    }
 
     .pill{
       padding:6px 10px;
@@ -291,25 +322,26 @@
     }
 
     .pill.ok{
-      background: rgba(22,163,74,.10);
+      background:rgba(22,163,74,.10);
       color:#15803d;
-      border-color: rgba(22,163,74,.22);
+      border-color:rgba(22,163,74,.22);
     }
 
     .pill.warn{
-      background: rgba(217,119,6,.10);
+      background:rgba(217,119,6,.10);
       color:#b45309;
-      border-color: rgba(217,119,6,.22);
+      border-color:rgba(217,119,6,.22);
     }
 
     .pill.bad{
-      background: rgba(220,38,38,.10);
+      background:rgba(220,38,38,.10);
       color:#b91c1c;
-      border-color: rgba(220,38,38,.22);
+      border-color:rgba(220,38,38,.22);
     }
 
     .flash{
-      margin:12px 0;
+      margin:12px auto;
+      max-width:1200px;
       padding:12px 14px;
       border-radius:14px;
       border:1px solid var(--line);
@@ -317,16 +349,18 @@
     }
 
     .flash.ok{
-      border-color: rgba(22,163,74,.25);
-      background: rgba(22,163,74,.08);
+      border-color:rgba(22,163,74,.25);
+      background:rgba(22,163,74,.08);
     }
 
     .flash.error{
-      border-color: rgba(220,38,38,.25);
-      background: rgba(220,38,38,.08);
+      border-color:rgba(220,38,38,.25);
+      background:rgba(220,38,38,.08);
     }
 
-    .small{font-size:12px}
+    .small{
+      font-size:12px;
+    }
 
     .split{
       display:flex;
@@ -336,19 +370,20 @@
 
     .split > *{
       flex:1;
-      min-width: 320px;
+      min-width:320px;
     }
 
-    @media (max-width: 760px){
+    @media (max-width:760px){
       .topbar{
         padding:12px 14px;
-        flex-direction:column;
-        align-items:stretch;
+        flex-wrap:wrap;
+        align-items:center;
         gap:12px;
       }
 
       .brand{
-        width:100%;
+        flex:1;
+        min-width:0;
       }
 
       .brand div div:first-child{
@@ -359,11 +394,19 @@
         font-size:15px !important;
       }
 
+      .hamburger{
+        display:flex;
+      }
+
       nav{
+        display:none;
         width:100%;
-        display:grid;
-        grid-template-columns: repeat(2, minmax(0,1fr));
+        grid-template-columns:1fr;
         gap:8px;
+      }
+
+      nav.active{
+        display:grid;
       }
 
       .navlink{
@@ -448,11 +491,7 @@
       }
     }
 
-    @media (max-width: 420px){
-      nav{
-        grid-template-columns:1fr;
-      }
-
+    @media (max-width:420px){
       .wrap{
         padding:12px;
       }
@@ -475,12 +514,20 @@
     <div class="brand">
       <span class="dot"></span>
       <div>
-        <div style="font-size:14px; color:var(--muted); font-weight:900;">Assurantiekantoor Klaas Vis</div>
-        <div style="font-size:16px;">Dekker offertesysteem</div>
+        <div style="font-size:14px; color:var(--muted); font-weight:900;">
+          Assurantiekantoor Klaas Vis
+        </div>
+        <div style="font-size:16px;">
+          Dekker offertesysteem
+        </div>
       </div>
     </div>
 
-    <nav>
+    <button class="hamburger" type="button" onclick="toggleMenu()">
+      ☰
+    </button>
+
+    <nav id="mainNav">
       <a class="navlink" href="{{ url_for('dashboard') }}">Dashboard</a>
       <a class="navlink" href="{{ url_for('import_page') }}">Import</a>
       <a class="navlink" href="{{ url_for('offers') }}">Offertes</a>
@@ -494,6 +541,7 @@
 
       <a class="navlink" href="{{ url_for('no_plate') }}">Zonder kenteken</a>
       <a class="navlink" href="{{ url_for('export_backup_page') }}">Export</a>
+
       {% if session.get("role") == "admin" %}
         <a class="navlink" href="{{ url_for('admin_users') }}">Gebruikers</a>
       {% endif %}
@@ -507,7 +555,11 @@
       {% for category, msg in messages[-1:] %}
         <div class="flash {{ category }}">
           <span>{{ msg }}</span>
-          <button type="button" onclick="this.closest('.flash').remove();" style="float:right;border:0;background:transparent;font-weight:900;cursor:pointer;font-size:18px;">
+          <button
+            type="button"
+            onclick="this.closest('.flash').remove();"
+            style="float:right;border:0;background:transparent;font-weight:900;cursor:pointer;font-size:18px;"
+          >
             ×
           </button>
         </div>
@@ -516,14 +568,23 @@
   {% endif %}
 {% endwith %}
 
+<div class="wrap">
   {% block content %}{% endblock %}
 </div>
+
 <script>
-  window.addEventListener("pageshow", function (event) {
+  window.addEventListener("pageshow", function(event) {
     if (event.persisted) {
       window.location.reload();
     }
   });
+
+  function toggleMenu() {
+    const nav = document.getElementById("mainNav");
+    if (nav) {
+      nav.classList.toggle("active");
+    }
+  }
 
   function clearFlashesOnServer() {
     fetch("{{ url_for('clear_flashes') }}", {

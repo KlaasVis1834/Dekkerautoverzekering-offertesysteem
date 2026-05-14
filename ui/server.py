@@ -36,6 +36,7 @@ from postgen import generate_post_letter_pdf
 from mailgen import load_template, render_template as render_mail_template, guess_aanhef_en_achternaam
 
 AANVRAAG_LINK = "https://www.klaasvis.nl/aanvraagformulier/"
+AANVRAAG_API_SECRET = os.environ.get("AANVRAAG_API_SECRET", "").strip()
 
 app = Flask(__name__)
 app.secret_key = os.environ.get("SECRET_KEY", "dekker-offertesysteem-local")

@@ -1204,8 +1204,7 @@ def set_decision(offer_no: str):
     return redirect(next_url)
 
 
-@app.post("/offer/<offer_no>/delete")
-@login_required
+
 @app.post("/offer/<offer_no>/delete")
 @login_required
 def delete_offer(offer_no: str):
@@ -1231,26 +1230,6 @@ def delete_offer(offer_no: str):
 
     return redirect(next_url)
 
-
-        for rel in [row["offer_pdf_path"], row["eml_path"], row["post_letter_path"]]:
-            if rel:
-                p = (PROJECT_ROOT / rel).resolve()
-                try:
-                    if p.exists() and PROJECT_ROOT in p.parents:
-                        p.unlink()
-                except Exception:
-                    pass
-
-        cur = _execute_retry(conn, "DELETE FROM offers WHERE offer_no = %s", (offer_no,))
-        deleted = getattr(cur, "rowcount", 0)
-        conn.commit()
-
-    if deleted:
-        flash(f"Offerte verwijderd: {offer_no}", "ok")
-    else:
-        flash(f"Offerte niet verwijderd: {offer_no} niet gevonden.", "error")
-
-    return redirect(url_for("offers"))
 
 
 

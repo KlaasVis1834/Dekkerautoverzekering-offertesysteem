@@ -1,0 +1,94 @@
+{% extends "base.html" %}
+{% block content %}
+
+<div class="card">
+  <div class="row" style="justify-content:space-between; align-items:center;">
+    <div>
+      <h3 style="margin:0">Ontvangen aanvragen</h3>
+      <div class="muted small">
+        Overzicht van alle online ingediende aanvraagformulieren.
+      </div>
+    </div>
+
+    <div class="row">
+      <a class="btn" href="{{ url_for('offers') }}">← Terug naar offertes</a>
+    </div>
+  </div>
+</div>
+
+<div style="height:14px"></div>
+
+{% if rows and rows|length > 0 %}
+  <table>
+    <tr>
+      <th>Offerte</th>
+      <th>Klant</th>
+      <th>Ontvangen op</th>
+      <th>Status</th>
+      <th>Acties</th>
+    </tr>
+
+    {% for r in rows %}
+    <tr>
+      <td>
+        <div><b>{{ r["offer_no"] or "—" }}</b></div>
+      </td>
+
+      <td>
+        <div><b>{{ r["naam"] or r["klantnaam"] or "—" }}</b></div>
+        <div class="muted small">{{ r["email"] or "—" }}</div>
+        <div class="muted small">{{ r["telefoon"] or "—" }}</div>
+      </td>
+
+      <td>
+        {{ r["created_at"] or r["submitted_at"] or "—" }}
+      </td>
+
+      <td>
+        {% if (r["status"] or "nieuw") == "nieuw" %}
+          <span class="pill warn">Nieuw</span>
+        {% elif (r["status"] or "") == "in_behandeling" %}
+          <span class="pill ok">In behandeling</span>
+        {% elif (r["status"] or "") == "afgerond" %}
+          <span class="pill ok">Afgerond</span>
+        {% else %}
+          <span class="pill">{{ r["status"] }}</span>
+        {% endif %}
+      </td>
+
+      <td>
+        <div class="grid" style="gap:8px;">
+          {% if r["offer_no"] %}
+            <a class="btn primary"
+               href="{{ url_for('offers', q=r['offer_no']) }}">
+              Open offerte
+            </a>
+          {% endif %}
+
+          {% if r["pdf_path"] %}
+            <a class="btn"
+               href="{{ url_for('get_file') }}?path={{ r['pdf_path'] }}">
+              PDF
+            </a>
+          {% endif %}
+
+          {% if r["json_path"] %}
+            <a class="btn"
+               href="{{ url_for('get_file') }}?path={{ r['json_path'] }}">
+              JSON
+            </a>
+          {% endif %}
+        </div>
+      </td>
+    </tr>
+    {% endfor %}
+  </table>
+{% else %}
+  <div class="card">
+    <div class="muted">
+      Er zijn nog geen aanvragen ontvangen.
+    </div>
+  </div>
+{% endif %}
+
+{% endblock %}

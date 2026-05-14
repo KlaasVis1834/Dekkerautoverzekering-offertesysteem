@@ -35,6 +35,7 @@ from rdw_estimator import estimate_vehicle_data_from_rdw
 from pdfgen import generate_offer_pdf
 from postgen import generate_post_letter_pdf
 from mailgen import load_template, render_template as render_mail_template, guess_aanhef_en_achternaam
+from bonus import herbereken_premie_op_svj
 
 AANVRAAG_LINK = "https://www.klaasvis.nl/aanvraagformulier/"
 AANVRAAG_API_SECRET = os.environ.get("AANVRAAG_API_SECRET", "").strip()

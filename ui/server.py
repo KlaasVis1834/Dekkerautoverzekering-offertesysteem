@@ -398,8 +398,6 @@ def clear_flashes():
 @app.route("/account", methods=["GET", "POST"])
 @login_required
 def account():
-    session.pop("_flashes", None)
-    session.modified = True
     ensure_db()
 
     if request.method == "POST":
@@ -932,8 +930,6 @@ def inject_application_counts():
 @app.route("/")
 @login_required
 def dashboard():
-    session.pop("_flashes", None)
-    session.modified = True
     ensure_db()
     last_batch_id = get_last_batch_id()
 
@@ -968,8 +964,6 @@ def followups():
 @app.route("/import", methods=["GET", "POST"])
 @login_required
 def import_page():
-    session.pop("_flashes", None)
-    session.modified = True
     ensure_db()
 
     inbox_dir = PROJECT_ROOT / "data" / "inbox"

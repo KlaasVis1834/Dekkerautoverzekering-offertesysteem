@@ -7,6 +7,7 @@ import secrets
 import requests
 import msal
 import base64
+import json
 from functools import wraps
 from pathlib import Path
 from datetime import datetime
@@ -286,6 +287,33 @@ def ensure_db():
             ("ms_graph_connected_at", "TEXT"),
         ]:
             _ensure_column(conn, "users", col, ddl)
+
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS applications (
+                id SERIAL PRIMARY KEY,
+                offer_no TEXT,
+                naam TEXT,
+                email TEXT,
+                telefoon TEXT,
+                status TEXT DEFAULT 'nieuw',
+                source TEXT DEFAULT 'aanvraagformulier',
+                raw_payload TEXT,
+                pdf_path TEXT,
+                json_path TEXT,
+                created_at TEXT,
+                updated_at TEXT
+            )
+            """
+        )
+
+        for col, ddl in [
+            ("aanvraag_ontvangen_at", "TEXT"),
+            ("aanvraag_naam", "TEXT"),
+            ("aanvraag_email", "TEXT"),
+            ("aanvraag_status", "TEXT DEFAULT 'geen'"),
+        ]:
+            _ensure_column(conn, "offers", col, ddl)
 
         seed_default_users(conn)
         conn.commit()
@@ -860,6 +888,23 @@ def _compose_dekking(auto_dekking: str, dekking_override: str, extra_svi, extra_
     return " / ".join(parts)
 
 
+@app.context_processor
+def inject_application_counts():
+    try:
+        ensure_db()
+        with connect() as conn:
+            pending = conn.execute(
+                """
+                SELECT COUNT(*) AS c
+                FROM applications
+                WHERE COALESCE(status, 'nieuw') = 'nieuw'
+                """
+            ).fetchone()["c"]
+        return {"pending_applications_count": pending}
+    except Exception:
+        return {"pending_applications_count": 0}
+
+
 @app.route("/")
 @login_required
 def dashboard():
@@ -875,12 +920,20 @@ def dashboard():
             """
         ).fetchone()["c"]
         blocked = conn.execute("SELECT COUNT(*) AS c FROM offers WHERE is_blocked = 1").fetchone()["c"]
+        new_applications = conn.execute(
+            """
+            SELECT COUNT(*) AS c
+            FROM applications
+            WHERE COALESCE(status, 'nieuw') = 'nieuw'
+            """
+        ).fetchone()["c"]
 
     return render_template(
         "dashboard.html",
         total=total,
         open_deliveries=open_deliveries,
         blocked=blocked,
+        new_applications=new_applications,
         last_batch_id=last_batch_id,
         denylist_exists=denylist_exists(),
         db_path="Supabase PostgreSQL",
@@ -993,7 +1046,8 @@ def offers():
            revision_of, revision_no,
            no_plate_vehicle_id, np_gewicht, np_maandpremie,
            np_cataloguswaarde, np_cataloguswaarde_part, np_cataloguswaarde_zak,
-           created_by, updated_by, updated_at, mail_template_type
+           created_by, updated_by, updated_at, mail_template_type,
+           aanvraag_ontvangen_at, aanvraag_naam, aanvraag_email, aanvraag_status
     FROM offers
     WHERE 1=1
     """
@@ -1088,6 +1142,152 @@ def blocked():
     return render_template("blocked.html", rows=rows)
 
 
+@app.route("/aanvragen")
+@login_required
+def applications():
+    ensure_db()
+
+    with connect() as conn:
+        rows = conn.execute(
+            """
+            SELECT
+                a.id,
+                a.offer_no,
+                a.naam,
+                a.email,
+                a.telefoon,
+                a.status,
+                a.created_at,
+                a.updated_at,
+                a.pdf_path,
+                a.json_path,
+                o.klantnaam
+            FROM applications a
+            LEFT JOIN offers o ON o.offer_no = a.offer_no
+            ORDER BY
+                CASE WHEN COALESCE(a.status, 'nieuw') = 'nieuw' THEN 0 ELSE 1 END,
+                a.created_at DESC,
+                a.id DESC
+            LIMIT 500
+            """
+        ).fetchall()
+
+    return render_template("aanvragen.html", rows=rows)
+
+
+@app.post("/api/aanvraag-ontvangen")
+def api_aanvraag_ontvangen():
+    ensure_db()
+
+    if AANVRAAG_API_SECRET:
+        received_secret = (
+            request.headers.get("X-Aanvraag-Secret")
+            or request.form.get("secret")
+            or ""
+        ).strip()
+
+        if received_secret != AANVRAAG_API_SECRET:
+            return jsonify({"ok": False, "error": "unauthorized"}), 401
+
+    data = request.get_json(silent=True) or request.form.to_dict() or {}
+
+    offer_no = (
+        data.get("offer_no")
+        or data.get("offerte_nummer")
+        or data.get("offerte")
+        or ""
+    ).strip()
+
+    naam = (
+        data.get("naam")
+        or data.get("name")
+        or data.get("customer_name")
+        or data.get("klantnaam")
+        or ""
+    ).strip()
+
+    email = (
+        data.get("email")
+        or data.get("from_email")
+        or ""
+    ).strip()
+
+    telefoon = (
+        data.get("telefoon")
+        or data.get("phone")
+        or data.get("from_phone")
+        or ""
+    ).strip()
+
+    now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+    safe_offer = _safe_filename(offer_no or "zonder_offertenummer")
+    applications_dir = PROJECT_ROOT / "data" / "applications"
+    applications_dir.mkdir(parents=True, exist_ok=True)
+    json_filename = _safe_filename(f"aanvraag_{safe_offer}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json")
+    json_abs = applications_dir / json_filename
+    json_abs.write_text(
+        json.dumps(data, ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
+    json_path = safe_relpath(json_abs)
+
+    with connect() as conn:
+        conn.execute(
+            """
+            INSERT INTO applications (
+                offer_no,
+                naam,
+                email,
+                telefoon,
+                status,
+                source,
+                raw_payload,
+                json_path,
+                created_at,
+                updated_at
+            )
+            VALUES (%s, %s, %s, %s, 'nieuw', 'aanvraagformulier', %s, %s, %s, %s)
+            """,
+            (
+                offer_no,
+                naam,
+                email,
+                telefoon,
+                json.dumps(data, ensure_ascii=False),
+                json_path,
+                now,
+                now,
+            ),
+        )
+
+        if offer_no:
+            conn.execute(
+                """
+                UPDATE offers
+                SET aanvraag_ontvangen_at = %s,
+                    aanvraag_naam = %s,
+                    aanvraag_email = %s,
+                    aanvraag_status = 'nieuw',
+                    decision_status = 'aanvraag_ontvangen',
+                    updated_by = 'Aanvraagformulier',
+                    updated_at = %s
+                WHERE offer_no = %s
+                """,
+                (
+                    now,
+                    naam,
+                    email,
+                    now,
+                    offer_no,
+                ),
+            )
+
+        conn.commit()
+
+    return jsonify({"ok": True, "offer_no": offer_no, "json_path": json_path})
+
+
 @app.post("/offer/<offer_no>/update-meta")
 @login_required
 def update_offer_meta(offer_no: str):
@@ -1172,7 +1372,7 @@ def set_decision(offer_no: str):
     decision = (request.form.get("decision") or "").strip()
     next_url = request.form.get("next") or url_for("offers")
 
-    if decision not in ("akkoord", "niet_akkoord", "open"):
+    if decision not in ("akkoord", "niet_akkoord", "open", "aanvraag_ontvangen"):
         flash("Ongeldige keuze.", "error")
         return redirect(next_url)
 
@@ -1988,7 +2188,7 @@ def _build_pdf_and_delivery(conn, r, now: datetime):
                 "achternaam": achternaam,
                 "auto": auto_show,
                 "offerte_nummer": offer_no,
-                "aanvraag_link": AANVRAAG_LINK,
+                "aanvraag_link": f"{AANVRAAG_LINK}?offer_no={offer_no}",
                 "revision_no": revision_no,
                 "revision_of": r["revision_of"] or "",
                 "svj_override": r["svj_override"] if r["svj_override"] is not None else "",

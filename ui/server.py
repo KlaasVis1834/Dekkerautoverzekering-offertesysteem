@@ -55,6 +55,14 @@ MICROSOFT_SCOPES = ["User.Read", "Mail.ReadWrite"]
 DB_READY = False
 DB_POOL = None
 
+
+@app.after_request
+def add_no_cache_headers(response):
+    response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
+    response.headers["Pragma"] = "no-cache"
+    response.headers["Expires"] = "0"
+    return response
+
 DEFAULT_USERS = [
     ("randy", "Randy", "admin"),
     ("tim", "Tim", "medewerker"),
@@ -378,7 +386,7 @@ def logout():
 def clear_flashes():
     session.pop("_flashes", None)
     session.modified = True
-    return redirect(url_for("dashboard"))
+    return redirect(request.referrer or url_for("dashboard"))
 
 
 @app.route("/account", methods=["GET", "POST"])
@@ -957,26 +965,39 @@ def import_page():
     fixed_deny = PROJECT_ROOT / "data" / "denylist.docx"
 
     if request.method == "POST":
-        excel_file = request.files.get("excel")
+        # Oude meldingen wissen voordat een nieuwe import start.
+        session.pop("_flashes", None)
+        session.modified = True
+
+        excel_file = (
+            request.files.get("excel")
+            or request.files.get("file")
+            or request.files.get("upload")
+            or request.files.get("bestand")
+        )
         deny_file = request.files.get("denylist")
 
-        if not excel_file or excel_file.filename.strip() == "":
+        if not excel_file or not (excel_file.filename or "").strip():
             flash("Kies een Excel bestand.", "error")
             return redirect(url_for("import_page"))
 
-        excel_path = inbox_dir / excel_file.filename
+        original_name = _safe_filename(excel_file.filename or "import.xlsx")
+        if not original_name.lower().endswith((".xlsx", ".xls")):
+            flash("Import fout: upload een Excel-bestand (.xlsx of .xls).", "error")
+            return redirect(url_for("import_page"))
+
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        excel_path = inbox_dir / f"{timestamp}_{original_name}"
         excel_file.save(excel_path)
 
-        if deny_file and deny_file.filename.strip():
+        if deny_file and (deny_file.filename or "").strip():
             fixed_deny.parent.mkdir(parents=True, exist_ok=True)
             deny_file.save(fixed_deny)
-            flash("Denylist geüpdatet.", "ok")
 
         deny_path = str(fixed_deny) if fixed_deny.exists() else None
 
         try:
             n = import_excel(str(excel_path), deny_path)
-            flash(f"Import gelukt: {n} offertes toegevoegd.", "ok")
             batch_id = get_last_batch_id()
 
             if batch_id:
@@ -998,13 +1019,19 @@ def import_page():
                     )
                     conn.commit()
 
-            flash(f"Import gelukt: {n} rijen verwerkt.", "ok")
+            flash(f"Import gelukt: {n} offertes toegevoegd.", "ok")
+            return redirect(url_for("offers", delivery="all"))
+
         except Exception as e:
-            flash(f"Import fout: {e}", "error")
+            print("IMPORT FOUT:", repr(e))
+            flash(f"Import fout: {type(e).__name__}: {e}", "error")
+            return redirect(url_for("import_page"))
 
-        return redirect(url_for("offers"))
-
-    excel_candidates = sorted(inbox_dir.glob("*.xlsx"), key=lambda p: p.stat().st_mtime, reverse=True)[:10]
+    excel_candidates = sorted(
+        inbox_dir.glob("*.xls*"),
+        key=lambda p: p.stat().st_mtime,
+        reverse=True,
+    )[:10]
 
     return render_template(
         "import.html",
@@ -1012,7 +1039,6 @@ def import_page():
         denylist_present=fixed_deny.exists(),
         denylist_path=safe_relpath(fixed_deny) if fixed_deny.exists() else None,
     )
-
 
 @app.route("/offers")
 @login_required
@@ -1421,26 +1447,60 @@ def delete_offer(offer_no: str):
 
     next_url = request.form.get("next") or url_for("offers")
 
-    with connect() as conn:
-        deleted = conn.execute(
-            """
-            DELETE FROM offers
-            WHERE TRIM(offer_no) = TRIM(%s)
-            RETURNING offer_no
-            """,
-            (offer_no,),
-        ).fetchone()
-        conn.commit()
+    # Oude meldingen wissen, zodat "offerte verwijderd" niet blijft hangen.
+    session.pop("_flashes", None)
+    session.modified = True
 
-    if deleted:
-        flash(f"Offerte verwijderd: {offer_no}", "ok")
-    else:
-        flash(f"Offerte niet gevonden of niet verwijderd: {offer_no}", "error")
+    try:
+        with connect() as conn:
+            row = conn.execute(
+                """
+                SELECT offer_no, offer_pdf_path, eml_path, post_letter_path
+                FROM offers
+                WHERE TRIM(offer_no) = TRIM(%s)
+                """,
+                (offer_no,),
+            ).fetchone()
+
+            if not row:
+                flash(f"Offerte niet gevonden of niet verwijderd: {offer_no}", "error")
+                return redirect(next_url)
+
+            for rel in [row["offer_pdf_path"], row["eml_path"], row["post_letter_path"]]:
+                if not rel:
+                    continue
+                try:
+                    p = (PROJECT_ROOT / rel).resolve()
+                    if p.exists() and (p == PROJECT_ROOT or PROJECT_ROOT in p.parents):
+                        p.unlink()
+                except Exception as file_error:
+                    print("Bestand verwijderen overgeslagen:", repr(file_error))
+
+            conn.execute(
+                "DELETE FROM applications WHERE TRIM(COALESCE(offer_no, '')) = TRIM(%s)",
+                (offer_no,),
+            )
+
+            deleted = conn.execute(
+                """
+                DELETE FROM offers
+                WHERE TRIM(offer_no) = TRIM(%s)
+                RETURNING offer_no
+                """,
+                (offer_no,),
+            ).fetchone()
+
+            conn.commit()
+
+        # Geen succes-flash meer: de actie is klaar en de melding hoeft niet te blijven staan.
+        if not deleted:
+            flash(f"Offerte niet gevonden of niet verwijderd: {offer_no}", "error")
+
+    except Exception as e:
+        print("DELETE FOUT:", repr(e))
+        flash(f"Verwijderen mislukt: {type(e).__name__}: {e}", "error")
 
     return redirect(next_url)
-
-
-
 
 @app.get("/offer/<offer_no>/download-postbrief")
 @login_required
@@ -1685,13 +1745,18 @@ def no_plate():
 def no_plate_delete(vid: int):
     ensure_db()
 
-    with connect() as conn:
-        _execute_retry(conn, "DELETE FROM no_plate_vehicles WHERE id = %s", (vid,))
-        conn.commit()
+    session.pop("_flashes", None)
+    session.modified = True
 
-    flash("No-plate voertuig verwijderd.", "ok")
+    try:
+        with connect() as conn:
+            _execute_retry(conn, "DELETE FROM no_plate_vehicles WHERE id = %s", (vid,))
+            conn.commit()
+    except Exception as e:
+        print("NO-PLATE DELETE FOUT:", repr(e))
+        flash(f"No-plate voertuig verwijderen mislukt: {type(e).__name__}: {e}", "error")
+
     return redirect(url_for("no_plate"))
-
 
 @app.get("/no-plate/search")
 @login_required
@@ -2355,6 +2420,9 @@ def export_last_batch():
     now = datetime.now()
     batch_id = get_last_batch_id()
 
+    session.pop("_flashes", None)
+    session.modified = True
+
     if not batch_id:
         flash("Geen batch gevonden om te exporteren.", "error")
         return redirect(url_for("dashboard"))
@@ -2362,6 +2430,7 @@ def export_last_batch():
     processed = 0
     mails = 0
     posts = 0
+    errors = 0
     msg_rows = []
     post_rows = []
 
@@ -2385,31 +2454,41 @@ def export_last_batch():
         ).fetchall()
 
         for r in rows:
-            info = _build_pdf_and_delivery(conn, r, now)
-            processed += 1
+            try:
+                info = _build_pdf_and_delivery(conn, r, now)
+                processed += 1
 
-            if info["kind"] == "email":
-                mails += 1
-                msg_rows.append(
-                    {
-                        "offer_no": r["offer_no"],
-                        "klantnaam": r["klantnaam"] or "",
-                        "email": (r["email"] or "").strip(),
-                        "msg_path": info.get("msg"),
-                        "pdf_path": info["pdf"],
-                    }
-                )
-            else:
-                posts += 1
-                post_rows.append(
-                    {
-                        "offer_no": r["offer_no"],
-                        "klantnaam": r["klantnaam"] or "",
-                        "post_letter_path": info["post"],
-                    }
-                )
+                if info["kind"] == "email":
+                    mails += 1
+                    msg_rows.append(
+                        {
+                            "offer_no": r["offer_no"],
+                            "klantnaam": r["klantnaam"] or "",
+                            "email": (r["email"] or "").strip(),
+                            "msg_path": info.get("msg"),
+                            "pdf_path": info["pdf"],
+                        }
+                    )
+                else:
+                    posts += 1
+                    post_rows.append(
+                        {
+                            "offer_no": r["offer_no"],
+                            "klantnaam": r["klantnaam"] or "",
+                            "post_letter_path": info["post"],
+                        }
+                    )
+            except Exception as e:
+                errors += 1
+                print(f"Export fout bij {r['offer_no']}:", repr(e))
+                continue
 
         conn.commit()
+
+    if errors:
+        flash(f"Export deels gelukt: {processed} verwerkt, {errors} fout(en). Zie Render logs.", "error")
+    else:
+        flash(f"Export gelukt: {processed} verwerkt.", "ok")
 
     return render_template(
         "batch_done_msg.html",
@@ -2421,7 +2500,6 @@ def export_last_batch():
         post_rows=post_rows,
     )
 
-
 @app.post("/offer/<offer_no>/export-one")
 @login_required
 def export_one_offer(offer_no: str):
@@ -2429,26 +2507,34 @@ def export_one_offer(offer_no: str):
     now = datetime.now()
     next_url = request.form.get("next") or url_for("offers")
 
-    with connect() as conn:
-        r = conn.execute(
-            "SELECT * FROM offers WHERE TRIM(offer_no) = TRIM(%s)",
-            (offer_no,),
-        ).fetchone()
+    session.pop("_flashes", None)
+    session.modified = True
 
-        if not r:
-            flash("Offerte niet gevonden.", "error")
-            return redirect(next_url)
+    try:
+        with connect() as conn:
+            r = conn.execute(
+                "SELECT * FROM offers WHERE TRIM(offer_no) = TRIM(%s)",
+                (offer_no,),
+            ).fetchone()
 
-        if int(r["is_blocked"] or 0) == 1:
-            flash("Deze offerte is geblokkeerd en kan niet geëxporteerd worden.", "error")
-            return redirect(next_url)
+            if not r:
+                flash("Offerte niet gevonden.", "error")
+                return redirect(next_url)
 
-        info = _build_pdf_and_delivery(conn, r, now)
-        conn.commit()
+            if int(r["is_blocked"] or 0) == 1:
+                flash("Deze offerte is geblokkeerd en kan niet geëxporteerd worden.", "error")
+                return redirect(next_url)
 
-    flash(f"Offerte geëxporteerd ({info['kind']}): {offer_no}", "ok")
+            info = _build_pdf_and_delivery(conn, r, now)
+            conn.commit()
+
+        flash(f"Offerte geëxporteerd ({info['kind']}): {offer_no}", "ok")
+
+    except Exception as e:
+        print("EXPORT FOUT:", repr(e))
+        flash(f"Export mislukt voor {offer_no}: {type(e).__name__}: {e}", "error")
+
     return redirect(next_url)
-
 
 @app.get("/offer/<offer_no>/preview-pdf")
 @login_required

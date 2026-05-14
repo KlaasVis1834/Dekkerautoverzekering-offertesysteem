@@ -45,16 +45,39 @@
       </td>
 
       <td>
-        {% if (r["status"] or "nieuw") == "nieuw" %}
-          <span class="pill warn">Nieuw</span>
-        {% elif (r["status"] or "") == "in_behandeling" %}
-          <span class="pill ok">In behandeling</span>
-        {% elif (r["status"] or "") == "afgerond" %}
-          <span class="pill ok">Afgerond</span>
-        {% else %}
-          <span class="pill">{{ r["status"] }}</span>
-        {% endif %}
-      </td>
+  <div class="grid" style="gap:8px;">
+    {% if r["offer_no"] %}
+      <a class="btn primary"
+         href="{{ url_for('offers', q=r['offer_no']) }}">
+        Open offerte
+      </a>
+    {% endif %}
+
+    {% if r["pdf_path"] %}
+      <a class="btn"
+         href="{{ url_for('get_file') }}?path={{ r['pdf_path'] }}">
+        PDF
+      </a>
+    {% endif %}
+
+    {% if r["json_path"] %}
+      <a class="btn"
+         href="{{ url_for('get_file') }}?path={{ r['json_path'] }}">
+        JSON
+      </a>
+    {% endif %}
+
+    {% if (r["status"] or "nieuw") == "nieuw" %}
+      <form method="post"
+            action="{{ url_for('complete_application', application_id=r['id']) }}"
+            style="margin:0;">
+        <button type="submit" class="btn ok">
+          Markeer als afgehandeld
+        </button>
+      </form>
+    {% endif %}
+  </div>
+</td>
 
       <td>
         <div class="grid" style="gap:8px;">

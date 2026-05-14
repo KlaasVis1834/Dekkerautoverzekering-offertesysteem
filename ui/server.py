@@ -1471,6 +1471,7 @@ def delete_offer(offer_no: str):
 
     next_url = request.form.get("next") or url_for("offers")
 
+    # Verwijder alle bestaande flash-meldingen direct.
     session.pop("_flashes", None)
     session.modified = True
 
@@ -1485,10 +1486,16 @@ def delete_offer(offer_no: str):
                 (offer_no,),
             ).fetchone()
 
+            # Eventuele bestanden verwijderen
             if row:
-                for rel in [row["offer_pdf_path"], row["eml_path"], row["post_letter_path"]]:
+                for rel in (
+                    row["offer_pdf_path"],
+                    row["eml_path"],
+                    row["post_letter_path"],
+                ):
                     if not rel:
                         continue
+
                     try:
                         p = (PROJECT_ROOT / rel).resolve()
                         if p.exists() and PROJECT_ROOT in p.parents:
@@ -1496,6 +1503,7 @@ def delete_offer(offer_no: str):
                     except Exception as file_error:
                         print("Bestand verwijderen overgeslagen:", repr(file_error))
 
+            # Gekoppelde aanvragen verwijderen
             conn.execute(
                 """
                 DELETE FROM applications
@@ -1504,6 +1512,7 @@ def delete_offer(offer_no: str):
                 (offer_no,),
             )
 
+            # Offerte verwijderen
             deleted = conn.execute(
                 """
                 DELETE FROM offers
@@ -1515,8 +1524,9 @@ def delete_offer(offer_no: str):
 
             conn.commit()
 
+        # Alleen foutmelding tonen als er niets is verwijderd
         if not deleted:
-            flash(f"Offerte bestaat niet meer of was al verwijderd: {offer_no}", "ok")
+            flash(f"Offerte niet gevonden: {offer_no}", "error")
 
     except Exception as e:
         print("DELETE FOUT:", repr(e))

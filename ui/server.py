@@ -1184,7 +1184,11 @@ def offers():
         has_next=page < total_pages,
     )
 
-
+@app.get("/offer/<offer_no>")
+@login_required
+def offer_detail_redirect(offer_no: str):
+    return redirect(url_for("offers", q=offer_no))
+    
 @app.route("/blocked")
 @login_required
 def blocked():

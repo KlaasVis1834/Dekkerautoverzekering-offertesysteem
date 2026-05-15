@@ -14,6 +14,7 @@ from datetime import datetime
 from pypdf import PdfReader, PdfWriter
 import csv
 from io import StringIO
+from docx import Document
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 if str(PROJECT_ROOT) not in sys.path:
@@ -2845,6 +2846,37 @@ def export_backup_download():
     )
     response.headers["Content-Disposition"] = f"attachment; filename={filename}"
     return response
+
+@app.route("/deny")
+@login_required
+def deny_page():
+    deny_file = PROJECT_ROOT / "data" / "denylist.docx"
+
+    entries = []
+
+    if deny_file.exists():
+        try:
+            doc = Document(str(deny_file))
+
+            for p in doc.paragraphs:
+                text = (p.text or "").strip()
+
+                if not text:
+                    continue
+
+                if text.lower().startswith("de volgende ontvangen geen offerte"):
+                    continue
+
+                entries.append(text)
+
+        except Exception as e:
+            print("Denylist lezen mislukt:", repr(e))
+
+    return render_template(
+        "deny.html",
+        entries=entries,
+        denylist_path=safe_relpath(deny_file) if deny_file.exists() else None,
+    )
     
 if __name__ == "__main__":
     ensure_db()

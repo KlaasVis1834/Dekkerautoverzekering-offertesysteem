@@ -1,0 +1,49 @@
+{% extends "base.html" %}
+{% block content %}
+
+<div class="card">
+  <div class="row" style="justify-content:space-between; align-items:center;">
+    <div>
+      <h3 style="margin:0">Denylist</h3>
+      <div class="muted small">
+        Overzicht van klanten en bedrijven die geen offerte wensen te ontvangen.
+      </div>
+    </div>
+
+    <div class="row">
+      <a class="btn" href="{{ url_for('dashboard') }}">← Dashboard</a>
+      {% if denylist_path %}
+        <a class="btn primary"
+           href="{{ url_for('get_file') }}?path={{ denylist_path }}">
+          Open Word-bestand
+        </a>
+      {% endif %}
+    </div>
+  </div>
+</div>
+
+<div style="height:14px"></div>
+
+{% if entries and entries|length > 0 %}
+  <table>
+    <tr>
+      <th style="width:80px;">#</th>
+      <th>Naam / Bedrijf</th>
+    </tr>
+
+    {% for item in entries %}
+      <tr>
+        <td>{{ loop.index }}</td>
+        <td>{{ item }}</td>
+      </tr>
+    {% endfor %}
+  </table>
+{% else %}
+  <div class="card">
+    <div class="muted">
+      Geen denylist gevonden.
+    </div>
+  </div>
+{% endif %}
+
+{% endblock %}

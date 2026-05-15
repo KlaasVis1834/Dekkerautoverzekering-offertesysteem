@@ -6,7 +6,7 @@
     <div>
       <h3 style="margin:0">Denylist</h3>
       <div class="muted small">
-        Overzicht van klanten en bedrijven die geen offerte wensen te ontvangen.
+        Upload en bekijk klanten/bedrijven die geen offerte wensen te ontvangen.
       </div>
     </div>
 
@@ -24,11 +24,27 @@
 
 <div style="height:14px"></div>
 
+<div class="card">
+  <h3 style="margin-top:0;">Denylist uploaden</h3>
+
+  <form method="post" enctype="multipart/form-data" class="grid" style="gap:12px;">
+    <input type="file" name="denylist" accept=".docx" required>
+    <button class="btn ok" type="submit">Denylist uploaden / vervangen</button>
+  </form>
+
+  <div class="muted small" style="margin-top:10px;">
+    Upload hier het Word-bestand met klanten/bedrijven die geen offerte mogen ontvangen.
+    Dit bestand wordt ook gebruikt bij de Excel-import.
+  </div>
+</div>
+
+<div style="height:14px"></div>
+
 {% if entries and entries|length > 0 %}
   <table>
     <tr>
       <th style="width:80px;">#</th>
-      <th>Naam / Bedrijf</th>
+      <th>Naam / Bedrijf / Opmerking</th>
     </tr>
 
     {% for item in entries %}
@@ -41,7 +57,7 @@
 {% else %}
   <div class="card">
     <div class="muted">
-      Geen denylist gevonden.
+      Geen denylist gevonden of de lijst is leeg.
     </div>
   </div>
 {% endif %}

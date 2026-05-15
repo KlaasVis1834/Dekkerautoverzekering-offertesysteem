@@ -2847,12 +2847,30 @@ def export_backup_download():
     response.headers["Content-Disposition"] = f"attachment; filename={filename}"
     return response
 
-@app.route("/deny")
+@app.route("/deny", methods=["GET", "POST"])
 @login_required
 def deny_page():
-    deny_file = PROJECT_ROOT / "data" / "denylist.docx"
+    ensure_db()
 
+    deny_file = PROJECT_ROOT / "data" / "denylist.docx"
     entries = []
+
+    if request.method == "POST":
+        deny_upload = request.files.get("denylist")
+
+        if not deny_upload or not (deny_upload.filename or "").strip():
+            flash("Kies eerst een Word-bestand.", "error")
+            return redirect(url_for("deny_page"))
+
+        if not deny_upload.filename.lower().endswith(".docx"):
+            flash("Upload alleen een .docx Word-bestand.", "error")
+            return redirect(url_for("deny_page"))
+
+        deny_file.parent.mkdir(parents=True, exist_ok=True)
+        deny_upload.save(deny_file)
+
+        flash("Denylist succesvol bijgewerkt.", "ok")
+        return redirect(url_for("deny_page"))
 
     if deny_file.exists():
         try:
@@ -2871,6 +2889,7 @@ def deny_page():
 
         except Exception as e:
             print("Denylist lezen mislukt:", repr(e))
+            flash(f"Denylist kon niet worden gelezen: {type(e).__name__}", "error")
 
     return render_template(
         "deny.html",

@@ -62,7 +62,7 @@
     </a>
 
     {% if r["offer_no"] %}
-      <a class="btn" href="{{ url_for('offers', q=r['offer_no']) }}"
+      <a class="btn" href="{{ url_for('offer_detail_redirect', offer_no=r['offer_no']) }}"
         Open offerte
       </a>
     {% endif %}

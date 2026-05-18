@@ -1628,7 +1628,7 @@ def delete_offer(offer_no: str):
         print("DELETE FOUT:", repr(e))
         flash(f"Verwijderen mislukt: {type(e).__name__}: {e}", "error")
 
-return redirect(url_for("offers", delivery="all", _ts=int(time.time())))   
+    return redirect(url_for("offers", delivery="all", _ts=int(time.time())))   
 
 @app.get("/offer/<offer_no>/download-postbrief")
 @login_required

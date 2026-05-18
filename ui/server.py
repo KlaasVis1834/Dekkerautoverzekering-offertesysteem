@@ -2296,31 +2296,43 @@ def _build_pdf_and_delivery(conn, r, now: datetime):
                 "merk": np_merk,
                 "model": np_model,
             },
-            offer={
+offer={
     "regio": r["regio"] if r["regio"] is not None else "",
     "dekking": dekking_final,
     "dekking_override": r["dekking_override"] or "",
     "extra_svi": r["extra_svi"],
     "extra_rb": r["extra_rb"],
-    "gewicht": getattr(vinfo, "ledig_gewicht", "") or "",
-    "bouwjaar": getattr(vinfo, "bouwjaar", "") or "",
-    "cataloguswaarde": getattr(vinfo, "cataloguswaarde", "") or "",
-    "dagwaarde": getattr(vinfo, "dagwaarde", "") or "",
-    "bpm": getattr(vinfo, "bpm", "") or "",
-    "meldcode": meldcode_final,
-    "is_schatting": "1" if getattr(vinfo, "is_schatting", False) else "",
-    "schatting_toelichting": getattr(vinfo, "schatting_toelichting", "") or "",
+
+    # No-plate gegevens
+    "gewicht": gewicht_final,
+    "bouwjaar": bouwjaar_final,
+    "cataloguswaarde": catalogus_final,
+    "dagwaarde": "",
+    "bpm": "",
+    "meldcode": "-",
+
+    "brandstof": brandstof_final,
+    "is_schatting": "1",
+    "schatting_toelichting": (
+        "Voertuiggegevens zijn gebaseerd op de gekoppelde no-plate database."
+    ),
+
+    # Premie
     "premie_maand": _premie_met_svj_correctie(
-        maandpremie=r["maandpremie"],
+        maandpremie=premie_final,
         svj_override=r["svj_override"],
         klant_type=klant_type,
         voertuig_type=voertuig_type,
         regio=r["regio"],
     ),
+
     "svj_override": r["svj_override"],
 },
-            filename_base=_offer_pdf_filename_base(r["klantnaam"] or "", klant_type, offer_no),
-        )
+filename_base=_offer_pdf_filename_base(
+    r["klantnaam"] or "",
+    klant_type,
+    offer_no
+),
 
     else:
         kenteken_lookup = _kenteken_lookup_value(kenteken_db)

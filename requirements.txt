@@ -13,3 +13,5 @@ psycopg-pool
 msal
 requests
 pypdf
+selenium
+webdriver-manager

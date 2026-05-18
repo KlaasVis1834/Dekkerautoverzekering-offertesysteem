@@ -66,14 +66,6 @@ MICROSOFT_SCOPES = ["User.Read", "Mail.ReadWrite"]
 DB_READY = False
 DB_POOL = None
 
-
-@app.after_request
-def add_no_cache_headers(response):
-    response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
-    response.headers["Pragma"] = "no-cache"
-    response.headers["Expires"] = "0"
-    return response
-
 DEFAULT_USERS = [
     ("randy", "Randy", "admin"),
     ("tim", "Tim", "medewerker"),
@@ -669,6 +661,11 @@ def safe_relpath(p: Path) -> str:
         return str(p.relative_to(PROJECT_ROOT)).replace("\\", "/")
     except Exception:
         return str(p).replace("\\", "/")
+
+
+def fresh_redirect(url: str):
+    sep = "&" if "?" in url else "?"
+    return redirect(f"{url}{sep}_ts={int(time.time())}")
         
 def combine_post_package_pdf(post_letter_path: str, offer_pdf_path: str, offer_no: str, klantnaam: str) -> str:
     post_abs = (PROJECT_ROOT / post_letter_path).resolve()

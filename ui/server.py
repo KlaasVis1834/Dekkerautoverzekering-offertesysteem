@@ -1961,6 +1961,25 @@ def set_no_plate_for_offer(offer_no: str):
             flash("No-plate voertuig niet gevonden.", "error")
             return redirect(next_url)
 
+        # Huidige offer ophalen voor klant_type en regio
+        offer_row = conn.execute(
+            """
+            SELECT klant_type, regio
+            FROM offers
+            WHERE TRIM(offer_no) = TRIM(%s)
+            """,
+            (offer_no,),
+        ).fetchone()
+
+        klant_type = (
+            (offer_row["klant_type"] or "particulier").strip().lower()
+            if offer_row else "particulier"
+        )
+        regio = int(offer_row["regio"] or 0) if offer_row else 0
+
+        # Premie bepalen op basis van no-plate tabel
+        np_maandpremie = _pick_np_premie(np_row, klant_type, regio)
+
         _execute_retry(
             conn,
             """
@@ -1972,6 +1991,14 @@ def set_no_plate_for_offer(offer_no: str):
                 type_model = %s,
                 voertuig_type = COALESCE(NULLIF(%s,''), voertuig_type),
                 bouwjaar = COALESCE(%s, bouwjaar),
+
+                -- No-plate waarden opslaan
+                np_gewicht = %s,
+                np_cataloguswaarde = %s,
+                np_cataloguswaarde_part = %s,
+                np_cataloguswaarde_zak = %s,
+                np_maandpremie = %s,
+
                 updated_by = %s,
                 updated_at = %s
             WHERE TRIM(offer_no) = TRIM(%s)
@@ -1983,6 +2010,14 @@ def set_no_plate_for_offer(offer_no: str):
                 (np_row["type_model"] or "").strip(),
                 (np_row["voertuig_type"] or "").strip().lower(),
                 np_row["bouwjaar"],
+
+                # opgeslagen no-plate waarden
+                (np_row["gewicht"] or "").strip(),
+                (np_row["cataloguswaarde"] or "").strip(),
+                (np_row["cataloguswaarde_part"] or "").strip(),
+                (np_row["cataloguswaarde_zak"] or "").strip(),
+                np_maandpremie,
+
                 current_user_display(),
                 datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
                 offer_no,

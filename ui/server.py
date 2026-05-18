@@ -2334,6 +2334,8 @@ filename_base=_offer_pdf_filename_base(
     offer_no
 ),
 
+)
+
     else:
         kenteken_lookup = _kenteken_lookup_value(kenteken_db)
         kenteken_display = _format_nl_kenteken(kenteken_db)

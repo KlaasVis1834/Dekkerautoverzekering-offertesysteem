@@ -2180,6 +2180,7 @@ def _subject_for_offer(klant_type: str, revision_no: int, offer_no: str) -> str:
 
 def _build_pdf_and_delivery(conn, r, now: datetime):
     offer_no = r["offer_no"]
+    vinfo = None 
     klant_type = (r["klant_type"] or "particulier").strip().lower()
     email = (r["email"] or "").strip() or None
 

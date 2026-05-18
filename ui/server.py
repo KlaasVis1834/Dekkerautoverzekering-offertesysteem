@@ -1518,7 +1518,7 @@ def update_offer_meta(offer_no: str):
         conn.commit()
 
     flash(f"Gegevens opgeslagen voor {offer_no}.", "ok")
-    return redirect(next_url)
+    return fresh_redirect(next_url)
 
 
 @app.post("/offer/<offer_no>/decision")
@@ -1531,7 +1531,7 @@ def set_decision(offer_no: str):
 
     if decision not in ("akkoord", "niet_akkoord", "open", "aanvraag_ontvangen"):
         flash("Ongeldige keuze.", "error")
-        return redirect(next_url)
+        return fresh_redirect(next_url)
 
     with connect() as conn:
         new_call_status = "afgehandeld" if decision in ("akkoord", "niet_akkoord") else "open"
@@ -1559,7 +1559,7 @@ def set_decision(offer_no: str):
         conn.commit()
 
     flash(f"Beslissing opgeslagen: {offer_no} → {decision}", "ok")
-    return redirect(next_url)
+    return fresh_redirect(next_url)
 
 
 
@@ -1631,7 +1631,7 @@ def delete_offer(offer_no: str):
         print("DELETE FOUT:", repr(e))
         flash(f"Verwijderen mislukt: {type(e).__name__}: {e}", "error")
 
-    return redirect(next_url)
+    return fresh_redirect(next_url)
     
 @app.get("/offer/<offer_no>/download-postbrief")
 @login_required
@@ -1956,7 +1956,7 @@ def set_no_plate_for_offer(offer_no: str):
 
     if not vid.isdigit():
         flash("Kies eerst een no-plate voertuig.", "error")
-        return redirect(next_url)
+        return fresh_redirect(next_url)
 
     with connect() as conn:
         np_row = conn.execute(
@@ -1966,7 +1966,7 @@ def set_no_plate_for_offer(offer_no: str):
 
         if not np_row:
             flash("No-plate voertuig niet gevonden.", "error")
-            return redirect(next_url)
+            return fresh_redirect(next_url)
 
         # Huidige offer ophalen voor klant_type en regio
         offer_row = conn.execute(
@@ -2033,7 +2033,7 @@ def set_no_plate_for_offer(offer_no: str):
         conn.commit()
 
     flash(f"No-plate voertuig gekoppeld aan {offer_no}.", "ok")
-    return redirect(next_url)
+    return fresh_redirect(next_url)
 
 
 def _get_current_user_graph_tokens(conn):
@@ -2721,11 +2721,11 @@ def export_one_offer(offer_no: str):
 
             if not r:
                 flash("Offerte niet gevonden.", "error")
-                return redirect(next_url)
+                return fresh_redirect(next_url)
 
             if int(r["is_blocked"] or 0) == 1:
                 flash("Deze offerte is geblokkeerd en kan niet geëxporteerd worden.", "error")
-                return redirect(next_url)
+                return fresh_redirect(next_url)
 
             info = _build_pdf_and_delivery(conn, r, now)
             conn.commit()
@@ -2736,7 +2736,7 @@ def export_one_offer(offer_no: str):
         print("EXPORT FOUT:", repr(e))
         flash(f"Export mislukt voor {offer_no}: {type(e).__name__}: {e}", "error")
 
-    return redirect(next_url)
+    return fresh_redirect(next_url)
 
 @app.get("/offer/<offer_no>/preview-pdf")
 @login_required

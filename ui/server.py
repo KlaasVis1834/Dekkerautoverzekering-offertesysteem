@@ -1294,30 +1294,57 @@ def application_detail(application_id: int):
     )
 @app.post("/applications/<int:application_id>/complete")
 @login_required
-def complete_application(application_id):
+def complete_application(application_id: int):
     ensure_db()
 
-    with connect() as conn:
-        _execute_retry(
-            conn,
-            """
-            UPDATE applications
-            SET status = 'afgehandeld',
-                updated_at = %s
-            WHERE id = %s
-            """,
-            (
-                datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                application_id,
-            ),
-        )
-        conn.commit()
+    now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
-    flash("Aanvraag gemarkeerd als afgehandeld.", "ok")
+    try:
+        with connect() as conn:
+            app_row = conn.execute(
+                """
+                UPDATE applications
+                SET status = 'afgehandeld',
+                    updated_at = %s
+                WHERE id = %s
+                RETURNING id, offer_no
+                """,
+                (now, application_id),
+            ).fetchone()
 
-    return redirect(
-        url_for("applications", _ts=int(time.time()))
-    )    
+            if not app_row:
+                conn.rollback()
+                flash(f"Aanvraag niet gevonden: {application_id}", "error")
+                return redirect(url_for("applications"))
+
+            if app_row["offer_no"]:
+                conn.execute(
+                    """
+                    UPDATE offers
+                    SET aanvraag_status = 'afgehandeld',
+                        updated_by = %s,
+                        updated_at = %s
+                    WHERE TRIM(offer_no) = TRIM(%s)
+                    """,
+                    (
+                        current_user_display(),
+                        now,
+                        app_row["offer_no"],
+                    ),
+                )
+
+            conn.commit()
+
+        session.pop("_flashes", None)
+        session.modified = True
+
+    except Exception as e:
+        print("APPLICATION COMPLETE FOUT:", repr(e))
+        flash(f"Aanvraag afhandelen mislukt: {type(e).__name__}: {e}", "error")
+
+    return redirect(url_for("applications")
+    )
+    
 @app.route("/api/aanvraag", methods=["POST", "OPTIONS"])
 def api_aanvraag_ontvangen():
     if request.method == "OPTIONS":

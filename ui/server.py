@@ -1294,30 +1294,30 @@ def application_detail(application_id: int):
     )
 @app.post("/applications/<int:application_id>/complete")
 @login_required
-def complete_application(application_id: int):
+def complete_application(application_id):
     ensure_db()
 
-    try:
-        with connect() as conn:
-            conn.execute(
-                """
-                UPDATE applications
-                SET status = 'afgehandeld',
-                    updated_at = %s
-                WHERE id = %s
-                """,
-                (
-                    datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                    application_id,
-                ),
-            )
-            conn.commit()
-    except Exception as e:
-        print("APPLICATION COMPLETE FOUT:", repr(e))
-        flash(f"Aanvraag afhandelen mislukt: {type(e).__name__}: {e}", "error")
+    with connect() as conn:
+        _execute_retry(
+            conn,
+            """
+            UPDATE applications
+            SET status = 'afgehandeld',
+                updated_at = %s
+            WHERE id = %s
+            """,
+            (
+                datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                application_id,
+            ),
+        )
+        conn.commit()
 
-    return redirect(url_for("applications"))
-    
+    flash("Aanvraag gemarkeerd als afgehandeld.", "ok")
+
+    return redirect(
+        url_for("applications", _ts=int(time.time()))
+    )    
 @app.route("/api/aanvraag", methods=["POST", "OPTIONS"])
 def api_aanvraag_ontvangen():
     if request.method == "OPTIONS":

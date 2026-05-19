@@ -1755,55 +1755,6 @@ def no_plate():
         catalogus_legacy = (request.form.get("cataloguswaarde") or "").strip()
 
                 # ---------------------------------------------------------
-        # RDW schatting voor voertuigen zonder kenteken
-        # Alleen lege velden worden aangevuld.
-        # Handmatig ingevulde waarden blijven leidend.
-        # ---------------------------------------------------------
-        rdw_data = {}
-
-        if merk and model:
-            try:
-                rdw_data = estimate_vehicle_data_from_rdw(
-                    merk=merk,
-                    model=model,
-                    type_model=type_model,
-                    bouwjaar=bouwjaar,
-                )
-
-                if rdw_data is None:
-                    rdw_data = {}
-
-                if not isinstance(rdw_data, dict):
-                    print("RDW gaf geen dictionary terug:", rdw_data)
-                    rdw_data = {}
-
-            except Exception as e:
-                print("RDW-schatting volledig overgeslagen door fout:", repr(e))
-                rdw_data = {}
-
-        if rdw_data:
-            if not brandstof:
-                brandstof = rdw_data.get("brandstof") or ""
-
-            if not gewicht:
-                gewicht = rdw_data.get("gewicht") or ""
-
-            rdw_catalogus = rdw_data.get("cataloguswaarde") or ""
-
-            if not catalogus_part:
-                catalogus_part = rdw_catalogus
-
-            if not catalogus_zak:
-                catalogus_zak = rdw_catalogus
-
-            if not catalogus_legacy:
-                catalogus_legacy = rdw_catalogus
-
-            rdw_voertuig_type = rdw_data.get("voertuig_type") or ""
-            if rdw_voertuig_type in ("personenauto", "bestelauto"):
-                voertuig_type = rdw_voertuig_type
-
-        print("RDW resultaat veilig verwerkt:", rdw_data)
 
         def f(name):
             return _parse_float((request.form.get(name) or "").strip())

@@ -1276,7 +1276,7 @@ def application_detail(application_id: int):
 
     if not row:
         flash("Aanvraag niet gevonden.", "error")
-        return redirect(url_for("applications"))
+        return redirect(url_for("applications", _ts=int(time.time())))
 
     details = {}
     raw_payload = row.get("raw_payload") or ""

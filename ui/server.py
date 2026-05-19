@@ -2284,20 +2284,17 @@ offer={
     "dekking_override": r["dekking_override"] or "",
     "extra_svi": r["extra_svi"],
     "extra_rb": r["extra_rb"],
-
-    # No-plate gegevens
-    "gewicht": gewicht_final,
-    "bouwjaar": bouwjaar_final,
-    "cataloguswaarde": catalogus_final,
+    "gewicht": gewicht_final or "",
+    "bouwjaar": bouwjaar_final or "",
+    "cataloguswaarde": catalogus_final or "",
     "dagwaarde": "",
     "bpm": "",
     "meldcode": "-",
-
-    "brandstof": brandstof_final,
     "is_schatting": "1",
-    "schatting_toelichting": (
-        "Voertuiggegevens zijn gebaseerd op de gekoppelde no-plate database."
-    ),
+    "schatting_toelichting": "Voertuiggegevens zijn handmatig ingeschat op basis van de no-plate database.",
+    "premie_maand": premie_final,
+    "svj_override": r["svj_override"],
+},
 
     # Premie
     "premie_maand": _premie_met_svj_correctie(

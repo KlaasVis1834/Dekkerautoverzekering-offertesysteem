@@ -72,12 +72,6 @@
         PDF
       </a>
     {% endif %}
-
-    {% if r["json_path"] %}
-      <a class="btn" href="{{ url_for('get_file') }}?path={{ r['json_path'] }}">
-        JSON
-      </a>
-    {% endif %}
           
           {% if (r["status"] or "nieuw") == "nieuw" %}
             <form method="post"

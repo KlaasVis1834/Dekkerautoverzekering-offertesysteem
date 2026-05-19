@@ -533,8 +533,7 @@
       <a class="navlink" href="{{ url_for('deny_page') }}">Denylist</a>
       <a class="navlink" href="{{ url_for('offers') }}">Offertes</a>
 
-      <a class="navlink" href="{{ url_for('applications') }}">
-        Aanvragen
+<a class="navlink" href="{{ url_for('applications', _ts=range(100000,999999)|random) }}">        Aanvragen
         {% if pending_applications_count and pending_applications_count > 0 %}
           <span class="count">{{ pending_applications_count }}</span>
         {% endif %}

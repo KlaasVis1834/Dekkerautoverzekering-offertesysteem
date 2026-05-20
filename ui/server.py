@@ -2257,7 +2257,7 @@ def _build_pdf_and_delivery(conn, r, now: datetime):
             r["extra_rb"] if "extra_rb" in r.keys() else 0,
         )
 
-        offer_pdf_path = generate_offer_pdf(
+                offer_pdf_path = generate_offer_pdf(
             out_base_dir="data/offers",
             dt=now,
             offer_no=offer_no,
@@ -2278,41 +2278,29 @@ def _build_pdf_and_delivery(conn, r, now: datetime):
                 "merk": np_merk,
                 "model": np_model,
             },
-offer={
-    "regio": r["regio"] if r["regio"] is not None else "",
-    "dekking": dekking_final,
-    "dekking_override": r["dekking_override"] or "",
-    "extra_svi": r["extra_svi"],
-    "extra_rb": r["extra_rb"],
-    "gewicht": gewicht_final or "",
-    "bouwjaar": bouwjaar_final or "",
-    "cataloguswaarde": catalogus_final or "",
-    "dagwaarde": "",
-    "bpm": "",
-    "meldcode": "-",
-    "is_schatting": "1",
-    "schatting_toelichting": "Voertuiggegevens zijn handmatig ingeschat op basis van de no-plate database.",
-    "premie_maand": premie_final,
-    "svj_override": r["svj_override"],
-},
-
-    # Premie
-    "premie_maand": _premie_met_svj_correctie(
-        maandpremie=premie_final,
-        svj_override=r["svj_override"],
-        klant_type=klant_type,
-        voertuig_type=voertuig_type,
-        regio=r["regio"],
-    ),
-
-    "svj_override": r["svj_override"],
-},
-filename_base=_offer_pdf_filename_base(
-    r["klantnaam"] or "",
-    klant_type,
-    offer_no
-),
-
+            offer={
+                "regio": r["regio"] if r["regio"] is not None else "",
+                "dekking": dekking_final,
+                "dekking_override": r["dekking_override"] or "",
+                "extra_svi": r["extra_svi"],
+                "extra_rb": r["extra_rb"],
+                "gewicht": gewicht_final or "",
+                "bouwjaar": bouwjaar_final or "",
+                "cataloguswaarde": catalogus_final or "",
+                "dagwaarde": "",
+                "bpm": "",
+                "meldcode": "-",
+                "is_schatting": "1",
+                "schatting_toelichting": "Voertuiggegevens zijn handmatig ingeschat op basis van de no-plate database.",
+                "premie_maand": premie_final,
+                "svj_override": r["svj_override"],
+                "waarde_al_in_context": "1",
+            },
+            filename_base=_offer_pdf_filename_base(
+                r["klantnaam"] or "",
+                klant_type,
+                offer_no,
+            ),
 )
 
     else:

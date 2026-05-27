@@ -179,8 +179,8 @@ def seed_default_users(conn):
         )
 
 
-def mark_existing_new_offers_sent_once(conn):
-    marker_key = "mark_existing_new_offers_sent_20260527"
+def mark_existing_delivery_statuses_sent_once(conn):
+    marker_key = "mark_existing_delivery_statuses_sent_20260527"
 
     conn.execute(
         """
@@ -207,7 +207,12 @@ def mark_existing_new_offers_sent_once(conn):
         UPDATE offers
         SET delivery_status = 'verstuurd',
             updated_at = COALESCE(updated_at, %s)
-        WHERE COALESCE(delivery_status, 'nieuw') = 'nieuw'
+        WHERE COALESCE(delivery_status, 'nieuw') IN (
+            'nieuw',
+            'email_klaar',
+            'post_klaar',
+            'outlook_concept_klaar'
+        )
         """,
         (now,),
     )
@@ -374,7 +379,7 @@ def ensure_db():
             _ensure_column(conn, "offers", col, ddl)
 
         seed_default_users(conn)
-        mark_existing_new_offers_sent_once(conn)
+        mark_existing_delivery_statuses_sent_once(conn)
         conn.commit()
 
     DB_READY = True
@@ -1024,7 +1029,7 @@ def dashboard():
         open_deliveries = conn.execute(
             """
             SELECT COUNT(*) AS c FROM offers
-            WHERE is_blocked = 0 AND delivery_status IN ('email_klaar','post_klaar','outlook_concept_klaar')
+            WHERE is_blocked = 0 AND COALESCE(delivery_status, 'nieuw') = 'nieuw'
             """
         ).fetchone()["c"]
         blocked = conn.execute("SELECT COUNT(*) AS c FROM offers WHERE is_blocked = 1").fetchone()["c"]

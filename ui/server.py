@@ -25,7 +25,7 @@ from psycopg import OperationalError
 from psycopg_pool import ConnectionPool
 from flask import (
     Flask, render_template, request, redirect, url_for,
-    flash, send_file, jsonify, session, has_request_context,
+    flash, send_file, jsonify, session,
 )
 from werkzeug.security import generate_password_hash, check_password_hash
 
@@ -82,8 +82,6 @@ DEFAULT_USERS = [
 
 
 def current_user_display():
-    if not has_request_context():
-        return "Systeem"
     return session.get("display_name") or session.get("username") or "Onbekend"
 
 

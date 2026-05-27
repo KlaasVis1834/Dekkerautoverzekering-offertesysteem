@@ -180,7 +180,7 @@ def seed_default_users(conn):
 
 
 def mark_existing_delivery_statuses_sent_once(conn):
-    marker_key = "sync_existing_delivery_statuses_20260527"
+    marker_key = "mark_existing_delivery_statuses_sent_20260527"
 
     conn.execute(
         """
@@ -200,7 +200,22 @@ def mark_existing_delivery_statuses_sent_once(conn):
     if existing:
         return
 
-    sync_delivery_statuses(conn)
+    now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+    conn.execute(
+        """
+        UPDATE offers
+        SET delivery_status = 'verstuurd',
+            updated_at = COALESCE(updated_at, %s)
+        WHERE COALESCE(delivery_status, 'nieuw') IN (
+            'nieuw',
+            'email_klaar',
+            'post_klaar',
+            'outlook_concept_klaar'
+        )
+        """,
+        (now,),
+    )
 
     conn.execute(
         """
@@ -278,7 +293,6 @@ def ensure_db():
             ("np_cataloguswaarde", "TEXT"),
             ("np_cataloguswaarde_part", "TEXT"),
             ("np_cataloguswaarde_zak", "TEXT"),
-            ("graph_message_id", "TEXT"),
         ]:
             _ensure_column(conn, "offers", col, ddl)
 
@@ -707,140 +721,9 @@ def fresh_redirect(url: str):
     return redirect(f"{url}{sep}_ts={int(time.time())}")
 
 
-def redirect_fresh(url: str):
-    return fresh_redirect(url)
-
-
 def url_for_fresh(endpoint: str, **values):
     values["_ts"] = int(time.time())
     return url_for(endpoint, **values)
-
-
-def _status_sync_log(offer_no: str, old_status: str, new_status: str, reason: str):
-    try:
-        log_dir = PROJECT_ROOT / "logs"
-        log_dir.mkdir(parents=True, exist_ok=True)
-        with (log_dir / "status_sync.log").open("a", encoding="utf-8", newline="") as f:
-            writer = csv.writer(f)
-            writer.writerow([
-                datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                offer_no,
-                old_status or "",
-                new_status or "",
-                reason,
-            ])
-    except Exception as e:
-        print("Status sync logging mislukt:", repr(e))
-
-
-def _delivery_status_from_paths(row):
-    if int(row.get("is_blocked") or 0) == 1:
-        return "geblokkeerd", "denylist"
-    if row.get("aanvraag_status") == "afgehandeld":
-        return "afgehandeld", "aanvraag afgehandeld"
-    if row.get("aanvraag_ontvangen_at"):
-        return "aanvraag_ontvangen", "aanvraag ontvangen"
-    if row.get("graph_message_id"):
-        return "outlook_concept_klaar", "graph_message_id aanwezig"
-    if row.get("eml_path"):
-        return "email_klaar", "MSG-bestand aanwezig"
-    if row.get("post_letter_path"):
-        return "post_klaar", "postbrief aanwezig"
-    if row.get("offer_pdf_path") and (row.get("email") or "").strip():
-        return "email_klaar", "PDF en e-mailadres aanwezig"
-    if row.get("offer_pdf_path"):
-        return "post_klaar", "PDF zonder e-mailadres aanwezig"
-    return None, ""
-
-
-def _update_offer_delivery_status(
-    conn,
-    offer_no: str,
-    old_status: str,
-    new_status: str,
-    reason: str,
-    *,
-    offer_pdf_path=None,
-    eml_path=None,
-    post_letter_path=None,
-    delivery_method=None,
-    graph_message_id=None,
-):
-    now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    cur = _execute_retry(
-        conn,
-        """
-        UPDATE offers
-        SET offer_pdf_path = COALESCE(%s, offer_pdf_path),
-            eml_path = %s,
-            post_letter_path = %s,
-            delivery_method = COALESCE(%s, delivery_method),
-            delivery_status = %s,
-            graph_message_id = COALESCE(%s, graph_message_id),
-            updated_by = %s,
-            updated_at = %s
-        WHERE TRIM(offer_no) = TRIM(%s)
-        """,
-        (
-            offer_pdf_path,
-            eml_path,
-            post_letter_path,
-            delivery_method,
-            new_status,
-            graph_message_id,
-            current_user_display(),
-            now,
-            offer_no,
-        ),
-    )
-    if cur.rowcount <= 0:
-        _status_sync_log(offer_no, old_status, new_status, f"UPDATE raakte geen rij: {reason}")
-        print(f"Delivery status update raakte geen rij voor {offer_no}: {reason}")
-        return False
-
-    _status_sync_log(offer_no, old_status, new_status, reason)
-    conn.commit()
-    return True
-
-
-def sync_delivery_statuses(conn):
-    rows = conn.execute(
-        """
-        SELECT offer_no, delivery_status, is_blocked, aanvraag_status,
-               aanvraag_ontvangen_at, email, offer_pdf_path, eml_path,
-               post_letter_path, graph_message_id
-        FROM offers
-        WHERE COALESCE(delivery_status, 'nieuw') IN ('nieuw', 'verstuurd')
-          AND (
-              is_blocked = 1
-              OR aanvraag_status IN ('nieuw', 'afgehandeld')
-              OR COALESCE(aanvraag_ontvangen_at, '') != ''
-              OR COALESCE(graph_message_id, '') != ''
-              OR COALESCE(offer_pdf_path, '') != ''
-              OR COALESCE(eml_path, '') != ''
-              OR COALESCE(post_letter_path, '') != ''
-          )
-        """
-    ).fetchall()
-
-    for row in rows:
-        new_status, reason = _delivery_status_from_paths(row)
-        old_status = row.get("delivery_status") or "nieuw"
-        if not new_status or new_status == old_status:
-            continue
-
-        _update_offer_delivery_status(
-            conn,
-            row["offer_no"],
-            old_status,
-            new_status,
-            f"auto-sync: {reason}",
-            offer_pdf_path=row.get("offer_pdf_path"),
-            eml_path=row.get("eml_path"),
-            post_letter_path=row.get("post_letter_path"),
-            delivery_method="post" if new_status == "post_klaar" else "email" if new_status in ("email_klaar", "outlook_concept_klaar") else None,
-            graph_message_id=row.get("graph_message_id"),
-        )
         
 def combine_post_package_pdf(post_letter_path: str, offer_pdf_path: str, offer_no: str, klantnaam: str) -> str:
     post_abs = (PROJECT_ROOT / post_letter_path).resolve()
@@ -1142,7 +1025,6 @@ def dashboard():
     last_batch_id = get_last_batch_id()
 
     with connect() as conn:
-        sync_delivery_statuses(conn)
         total = conn.execute("SELECT COUNT(*) AS c FROM offers").fetchone()["c"]
         open_deliveries = conn.execute(
             """
@@ -1290,7 +1172,7 @@ def offers():
            revision_of, revision_no,
            no_plate_vehicle_id, np_gewicht, np_maandpremie,
            np_cataloguswaarde, np_cataloguswaarde_part, np_cataloguswaarde_zak,
-           graph_message_id, created_by, updated_by, updated_at, mail_template_type
+           created_by, updated_by, updated_at, mail_template_type
     FROM offers
     WHERE 1=1
     """
@@ -1337,7 +1219,6 @@ def offers():
     params.extend([per_page, offset])
 
     with connect() as conn:
-        sync_delivery_statuses(conn)
         rows = conn.execute(sql, tuple(params)).fetchall()
         total_rows = conn.execute(count_sql, tuple(count_params)).fetchone()["c"]
         months = conn.execute(
@@ -1499,7 +1380,6 @@ def complete_application(application_id: int):
                     """
                     UPDATE offers
                     SET aanvraag_status = 'afgehandeld',
-                        delivery_status = 'afgehandeld',
                         updated_by = %s,
                         updated_at = %s
                     WHERE TRIM(offer_no) = TRIM(%s)
@@ -1625,7 +1505,6 @@ def api_aanvraag_ontvangen():
                     aanvraag_naam = %s,
                     aanvraag_email = %s,
                     aanvraag_status = 'nieuw',
-                    delivery_status = 'aanvraag_ontvangen',
                     decision_status = 'aanvraag_ontvangen',
                     updated_by = 'Aanvraagformulier',
                     updated_at = %s
@@ -2666,17 +2545,25 @@ def _build_pdf_and_delivery(conn, r, now: datetime):
             graph_error = str(e)
 
         if graph_info:
-            _update_offer_delivery_status(
+            _execute_retry(
                 conn,
-                offer_no,
-                r["delivery_status"] or "nieuw",
-                "outlook_concept_klaar",
-                "Outlook-concept succesvol aangemaakt",
-                offer_pdf_path=offer_pdf_path,
-                eml_path=None,
-                post_letter_path=None,
-                delivery_method="email",
-                graph_message_id=graph_info.get("message_id"),
+                """
+                UPDATE offers
+                SET offer_pdf_path = %s,
+                    eml_path = NULL,
+                    post_letter_path = NULL,
+                    delivery_method = 'email',
+                    delivery_status = 'outlook_concept_klaar',
+                    updated_by = %s,
+                    updated_at = %s
+                WHERE TRIM(offer_no) = TRIM(%s)
+                """,
+                (
+                    offer_pdf_path,
+                    current_user_display(),
+                    datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                    offer_no,
+                ),
             )
 
             return {
@@ -2696,16 +2583,26 @@ def _build_pdf_and_delivery(conn, r, now: datetime):
             pdf_path=offer_pdf_path,
         )
 
-        _update_offer_delivery_status(
+        _execute_retry(
             conn,
-            offer_no,
-            r["delivery_status"] or "nieuw",
-            "email_klaar",
-            "MSG fallback bestand gegenereerd",
-            offer_pdf_path=offer_pdf_path,
-            eml_path=msg_path,
-            post_letter_path=None,
-            delivery_method="email",
+            """
+            UPDATE offers
+            SET offer_pdf_path = %s,
+                eml_path = %s,
+                post_letter_path = NULL,
+                delivery_method = 'email',
+                delivery_status = 'email_klaar',
+                updated_by = %s,
+                updated_at = %s
+            WHERE TRIM(offer_no) = TRIM(%s)
+            """,
+            (
+                offer_pdf_path,
+                msg_path,
+                current_user_display(),
+                datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                offer_no,
+            ),
         )
 
         if graph_error:
@@ -2740,16 +2637,26 @@ def _build_pdf_and_delivery(conn, r, now: datetime):
         klantnaam=r["klantnaam"] or "",
     )
 
-    _update_offer_delivery_status(
+    _execute_retry(
         conn,
-        offer_no,
-        r["delivery_status"] or "nieuw",
-        "post_klaar",
-        "Postbrief/PDF gegenereerd",
-        offer_pdf_path=offer_pdf_path,
-        eml_path=None,
-        post_letter_path=post_package_path,
-        delivery_method="post",
+        """
+        UPDATE offers
+        SET offer_pdf_path = %s,
+            post_letter_path = %s,
+            eml_path = NULL,
+            delivery_method = 'post',
+            delivery_status = 'post_klaar',
+            updated_by = %s,
+            updated_at = %s
+        WHERE TRIM(offer_no) = TRIM(%s)
+        """,
+        (
+            offer_pdf_path,
+            post_package_path,
+            current_user_display(),
+            datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            offer_no,
+        ),
     )
 
     return {
@@ -2837,7 +2744,15 @@ def export_last_batch():
     else:
         flash(f"Export gelukt: {processed} verwerkt.", "ok")
 
-    return fresh_redirect(url_for("offers", delivery="all"))
+    return render_template(
+        "batch_done_msg.html",
+        batch_id=batch_id,
+        processed=processed,
+        mails=mails,
+        posts=posts,
+        msgs=msg_rows,
+        post_rows=post_rows,
+    )
 
 @app.post("/offer/<offer_no>/export-one")
 @login_required

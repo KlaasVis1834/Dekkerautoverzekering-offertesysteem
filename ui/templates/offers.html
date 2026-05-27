@@ -93,7 +93,8 @@
         <option value="email_klaar" {% if delivery=="email_klaar" %}selected{% endif %}>E-mail klaar</option>
         <option value="outlook_concept_klaar" {% if delivery=="outlook_concept_klaar" %}selected{% endif %}>Outlook concept klaar</option>
         <option value="post_klaar" {% if delivery=="post_klaar" %}selected{% endif %}>Post klaar</option>
-        <option value="verstuurd" {% if delivery=="verstuurd" %}selected{% endif %}>Verstuurd</option>
+        <option value="aanvraag_ontvangen" {% if delivery=="aanvraag_ontvangen" %}selected{% endif %}>Aanvraag ontvangen</option>
+        <option value="afgehandeld" {% if delivery=="afgehandeld" %}selected{% endif %}>Afgehandeld</option>
         <option value="geblokkeerd" {% if delivery=="geblokkeerd" %}selected{% endif %}>Geblokkeerd</option>
       </select>
       <button class="btn ok" type="submit">Filter</button>
@@ -249,8 +250,10 @@
           <div class="pill ok">Outlook concept klaar</div>
         {% elif (r["delivery_status"] or "") == "post_klaar" %}
           <div class="pill ok">Post klaar</div>
-        {% elif (r["delivery_status"] or "") == "verstuurd" %}
-          <div class="pill ok">Verstuurd</div>
+        {% elif (r["delivery_status"] or "") == "aanvraag_ontvangen" %}
+          <div class="pill ok">Aanvraag ontvangen</div>
+        {% elif (r["delivery_status"] or "") == "afgehandeld" %}
+          <div class="pill ok">Afgehandeld</div>
         {% else %}
           <div class="pill warn">{{ r["delivery_status"] or "nieuw" }}</div>
         {% endif %}
@@ -331,8 +334,10 @@
               <div class="pill ok">Outlook concept klaar</div>
             {% elif (r["delivery_status"] or "") == "post_klaar" %}
               <div class="pill ok">Post klaar</div>
-            {% elif (r["delivery_status"] or "") == "verstuurd" %}
-              <div class="pill ok">Verstuurd</div>
+            {% elif (r["delivery_status"] or "") == "aanvraag_ontvangen" %}
+              <div class="pill ok">Aanvraag ontvangen</div>
+            {% elif (r["delivery_status"] or "") == "afgehandeld" %}
+              <div class="pill ok">Afgehandeld</div>
             {% else %}
               <div class="pill warn">{{ r["delivery_status"] or "nieuw" }}</div>
             {% endif %}

@@ -44,13 +44,18 @@ AANVRAAG_LINK = "https://www.klaasvis.nl/aanvraagformulier/"
 AANVRAAG_API_SECRET = os.environ.get("AANVRAAG_API_SECRET", "").strip()
 
 app = Flask(__name__)
+app.config["TEMPLATES_AUTO_RELOAD"] = True
+app.jinja_env.auto_reload = True
+app.config["SEND_FILE_MAX_AGE_DEFAULT"] = 0
+
 @app.after_request
 def add_no_cache_headers(response):
-    response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
+    response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0, s-maxage=0"
     response.headers["Pragma"] = "no-cache"
     response.headers["Expires"] = "0"
     response.headers["Surrogate-Control"] = "no-store"
     return response
+
 app.secret_key = os.environ.get("SECRET_KEY", "dekker-offertesysteem-local")
 
 DATABASE_URL = os.environ.get("DATABASE_URL", "").strip()
@@ -666,6 +671,11 @@ def safe_relpath(p: Path) -> str:
 def fresh_redirect(url: str):
     sep = "&" if "?" in url else "?"
     return redirect(f"{url}{sep}_ts={int(time.time())}")
+
+
+def url_for_fresh(endpoint: str, **values):
+    values["_ts"] = int(time.time())
+    return url_for(endpoint, **values)
         
 def combine_post_package_pdf(post_letter_path: str, offer_pdf_path: str, offer_no: str, klantnaam: str) -> str:
     post_abs = (PROJECT_ROOT / post_letter_path).resolve()
@@ -1018,12 +1028,12 @@ def import_page():
 
         if not excel_file or not (excel_file.filename or "").strip():
             flash("Kies een Excel bestand.", "error")
-            return redirect(url_for("import_page"))
+            return redirect(url_for_fresh("import_page"))
 
         original_name = _safe_filename(excel_file.filename or "import.xlsx")
         if not original_name.lower().endswith((".xlsx", ".xls")):
             flash("Import fout: upload een Excel-bestand (.xlsx of .xls).", "error")
-            return redirect(url_for("import_page"))
+            return redirect(url_for_fresh("import_page"))
 
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         excel_path = inbox_dir / f"{timestamp}_{original_name}"
@@ -1059,12 +1069,12 @@ def import_page():
                     conn.commit()
 
             flash(f"Import gelukt: {n} offertes toegevoegd.", "ok")
-            return redirect(url_for("offers", delivery="all"))
+            return redirect(url_for_fresh("offers", delivery="all"))
 
         except Exception as e:
             print("IMPORT FOUT:", repr(e))
             flash(f"Import fout: {type(e).__name__}: {e}", "error")
-            return redirect(url_for("import_page"))
+            return redirect(url_for_fresh("import_page"))
 
     excel_candidates = sorted(
         inbox_dir.glob("*.xls*"),
@@ -1315,7 +1325,7 @@ def complete_application(application_id: int):
             if not app_row:
                 conn.rollback()
                 flash(f"Aanvraag niet gevonden: {application_id}", "error")
-                return redirect(url_for("applications"))
+                return redirect(url_for_fresh("applications"))
 
             if app_row["offer_no"]:
                 conn.execute(
@@ -1342,8 +1352,7 @@ def complete_application(application_id: int):
         print("APPLICATION COMPLETE FOUT:", repr(e))
         flash(f"Aanvraag afhandelen mislukt: {type(e).__name__}: {e}", "error")
 
-    return redirect(url_for("applications")
-    )
+    return redirect(url_for_fresh("applications"))
     
 @app.route("/api/aanvraag", methods=["POST", "OPTIONS"])
 def api_aanvraag_ontvangen():
@@ -1503,7 +1512,7 @@ def update_offer_meta(offer_no: str):
     dienstverlening = round(maandpremie * 0.18, 2) if maandpremie is not None else None
 
     with connect() as conn:
-        _execute_retry(
+        updated = _execute_retry(
             conn,
             """
             UPDATE offers
@@ -1521,6 +1530,7 @@ def update_offer_meta(offer_no: str):
                 updated_by = %s,
                 updated_at = %s
             WHERE TRIM(offer_no) = TRIM(%s)
+            RETURNING offer_no
             """,
             (
                 maandpremie,
@@ -1538,10 +1548,13 @@ def update_offer_meta(offer_no: str):
                 datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
                 offer_no,
             ),
-        )
+        ).fetchone()
         conn.commit()
 
-    flash(f"Gegevens opgeslagen voor {offer_no}.", "ok")
+    if not updated:
+        flash(f"Offerte niet gevonden, niets opgeslagen: {offer_no}", "error")
+    else:
+        flash(f"Gegevens opgeslagen voor {updated['offer_no']}.", "ok")
     return fresh_redirect(next_url)
 
 
@@ -1559,7 +1572,7 @@ def set_decision(offer_no: str):
 
     with connect() as conn:
         new_call_status = "afgehandeld" if decision in ("akkoord", "niet_akkoord") else "open"
-        _execute_retry(
+        updated = _execute_retry(
             conn,
             """
             UPDATE offers
@@ -1569,6 +1582,7 @@ def set_decision(offer_no: str):
                 updated_by = %s,
                 updated_at = %s
             WHERE TRIM(offer_no) = TRIM(%s)
+            RETURNING offer_no
             """,
             (
                 decision,
@@ -1579,10 +1593,13 @@ def set_decision(offer_no: str):
                 datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
                 offer_no,
             ),
-        )
+        ).fetchone()
         conn.commit()
 
-    flash(f"Beslissing opgeslagen: {offer_no} → {decision}", "ok")
+    if not updated:
+        flash(f"Offerte niet gevonden, beslissing niet opgeslagen: {offer_no}", "error")
+    else:
+        flash(f"Beslissing opgeslagen: {updated['offer_no']} → {decision}", "ok")
     return fresh_redirect(next_url)
 
 
@@ -1824,7 +1841,7 @@ def no_plate():
 
             conn.commit()
 
-        return redirect(url_for("no_plate"))
+        return redirect(url_for_fresh("no_plate"))
 
     q = (request.args.get("q") or "").strip()
 
@@ -1866,7 +1883,7 @@ def no_plate_delete(vid: int):
         print("NO-PLATE DELETE FOUT:", repr(e))
         flash(f"No-plate voertuig verwijderen mislukt: {type(e).__name__}: {e}", "error")
 
-    return redirect(url_for("no_plate"))
+    return redirect(url_for_fresh("no_plate"))
 
 @app.get("/no-plate/search")
 @login_required
@@ -1984,6 +2001,7 @@ def set_no_plate_for_offer(offer_no: str):
                 updated_by = %s,
                 updated_at = %s
             WHERE TRIM(offer_no) = TRIM(%s)
+            RETURNING offer_no
             """,
             (
                 int(vid),
@@ -2004,10 +2022,13 @@ def set_no_plate_for_offer(offer_no: str):
                 datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
                 offer_no,
             ),
-        )
+        ).fetchone()
         conn.commit()
 
-    flash(f"No-plate voertuig gekoppeld aan {offer_no}.", "ok")
+    if not updated:
+        flash(f"Offerte niet gevonden, no-plate niet gekoppeld: {offer_no}", "error")
+    else:
+        flash(f"No-plate voertuig gekoppeld aan {updated['offer_no']}.", "ok")
     return fresh_redirect(next_url)
 
 
@@ -2226,6 +2247,29 @@ def _build_pdf_and_delivery(conn, r, now: datetime):
             ).fetchone()
         except Exception:
             np_row = None
+
+    if not kenteken_db and np_row is None and r["no_plate_vehicle_id"] is not None:
+        np_row = {
+            "id": r["no_plate_vehicle_id"],
+            "merk": r["merk"] or "",
+            "model": r["model"] or "",
+            "type_model": r["type_model"] or "",
+            "voertuig_type": r["voertuig_type"] or "personenauto",
+            "bouwjaar": r["bouwjaar"],
+            "brandstof": "",
+            "gewicht": r["np_gewicht"] or "",
+            "cataloguswaarde": r["np_cataloguswaarde"] or "",
+            "cataloguswaarde_part": r["np_cataloguswaarde_part"] or "",
+            "cataloguswaarde_zak": r["np_cataloguswaarde_zak"] or "",
+            "premie_part_r1": None,
+            "premie_part_r2": None,
+            "premie_part_r3": None,
+            "premie_part_r4": None,
+            "premie_zak_r1": None,
+            "premie_zak_r2": None,
+            "premie_zak_r3": None,
+            "premie_zak_r4": None,
+        }
 
     if np_row:
         np_merk = (np_row["merk"] or "").strip()
@@ -2881,17 +2925,17 @@ def deny_page():
 
         if not deny_upload or not (deny_upload.filename or "").strip():
             flash("Kies eerst een Word-bestand.", "error")
-            return redirect(url_for("deny_page"))
+            return redirect(url_for_fresh("deny_page"))
 
         if not deny_upload.filename.lower().endswith(".docx"):
             flash("Upload alleen een .docx Word-bestand.", "error")
-            return redirect(url_for("deny_page"))
+            return redirect(url_for_fresh("deny_page"))
 
         deny_file.parent.mkdir(parents=True, exist_ok=True)
         deny_upload.save(deny_file)
 
         flash("Denylist succesvol bijgewerkt.", "ok")
-        return redirect(url_for("deny_page"))
+        return redirect(url_for_fresh("deny_page"))
 
     if deny_file.exists():
         try:

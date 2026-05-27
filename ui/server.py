@@ -367,7 +367,6 @@ def ensure_db():
             _ensure_column(conn, "offers", col, ddl)
 
         seed_default_users(conn)
-        mark_existing_delivery_statuses_sent_once(conn)
         conn.commit()
 
     DB_READY = True
@@ -1144,7 +1143,6 @@ def dashboard():
     last_batch_id = get_last_batch_id()
 
     with connect() as conn:
-        sync_delivery_statuses(conn)
         total = conn.execute("SELECT COUNT(*) AS c FROM offers").fetchone()["c"]
         open_deliveries = conn.execute(
             """
@@ -1339,7 +1337,6 @@ def offers():
     params.extend([per_page, offset])
 
     with connect() as conn:
-        sync_delivery_statuses(conn)
         rows = conn.execute(sql, tuple(params)).fetchall()
         total_rows = conn.execute(count_sql, tuple(count_params)).fetchone()["c"]
         months = conn.execute(

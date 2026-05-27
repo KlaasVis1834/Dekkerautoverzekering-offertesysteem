@@ -1036,8 +1036,12 @@ def inject_application_counts():
             pending = conn.execute(
                 """
                 SELECT COUNT(*) AS c
-                FROM applications
-                WHERE COALESCE(status, 'nieuw') = 'nieuw'
+                FROM applications a
+                LEFT JOIN offers o
+                  ON TRIM(o.offer_no) = TRIM(a.offer_no)
+                WHERE COALESCE(a.status, 'nieuw') = 'nieuw'
+                  AND COALESCE(o.aanvraag_status, '') != 'afgehandeld'
+                  AND COALESCE(o.delivery_status, '') != 'afgehandeld'
                 """
             ).fetchone()["c"]
         return {"pending_applications_count": pending}
@@ -1316,7 +1320,12 @@ def aanvragen():
                     a.naam,
                     a.email,
                     a.telefoon,
-                    a.status,
+                    CASE
+                        WHEN COALESCE(o.aanvraag_status, '') = 'afgehandeld'
+                          OR COALESCE(o.delivery_status, '') = 'afgehandeld'
+                        THEN 'afgehandeld'
+                        ELSE COALESCE(a.status, 'nieuw')
+                    END AS status,
                     a.created_at,
                     a.updated_at,
                     a.pdf_path,
@@ -1325,7 +1334,12 @@ def aanvragen():
                 FROM applications a
                 LEFT JOIN offers o ON TRIM(o.offer_no) = TRIM(a.offer_no)
                 ORDER BY
-                    CASE WHEN COALESCE(a.status, 'nieuw') = 'nieuw' THEN 0 ELSE 1 END,
+                    CASE
+                        WHEN COALESCE(o.aanvraag_status, '') = 'afgehandeld'
+                          OR COALESCE(o.delivery_status, '') = 'afgehandeld'
+                          OR COALESCE(a.status, 'nieuw') != 'nieuw'
+                        THEN 1 ELSE 0
+                    END,
                     a.created_at DESC,
                     a.id DESC
                 LIMIT 500
@@ -1403,6 +1417,19 @@ def complete_application(application_id: int):
                 return redirect(url_for_fresh("applications"))
 
             if app_row["offer_no"]:
+                conn.execute(
+                    """
+                    UPDATE applications
+                    SET status = 'afgehandeld',
+                        updated_at = %s
+                    WHERE TRIM(COALESCE(offer_no, '')) = TRIM(%s)
+                    """,
+                    (
+                        now,
+                        app_row["offer_no"],
+                    ),
+                )
+
                 offer_row = conn.execute(
                     """
                     UPDATE offers

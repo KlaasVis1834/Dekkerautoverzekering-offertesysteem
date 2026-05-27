@@ -179,6 +179,48 @@ def seed_default_users(conn):
         )
 
 
+def mark_existing_new_offers_sent_once(conn):
+    marker_key = "mark_existing_new_offers_sent_20260527"
+
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS app_settings (
+            key TEXT PRIMARY KEY,
+            value TEXT,
+            updated_at TEXT
+        )
+        """
+    )
+
+    existing = conn.execute(
+        "SELECT value FROM app_settings WHERE key = %s",
+        (marker_key,),
+    ).fetchone()
+
+    if existing:
+        return
+
+    now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+    conn.execute(
+        """
+        UPDATE offers
+        SET delivery_status = 'verstuurd',
+            updated_at = COALESCE(updated_at, %s)
+        WHERE COALESCE(delivery_status, 'nieuw') = 'nieuw'
+        """,
+        (now,),
+    )
+
+    conn.execute(
+        """
+        INSERT INTO app_settings (key, value, updated_at)
+        VALUES (%s, %s, %s)
+        """,
+        (marker_key, "done", now),
+    )
+
+
 def ensure_db():
     global DB_READY
 
@@ -332,6 +374,7 @@ def ensure_db():
             _ensure_column(conn, "offers", col, ddl)
 
         seed_default_users(conn)
+        mark_existing_new_offers_sent_once(conn)
         conn.commit()
 
     DB_READY = True

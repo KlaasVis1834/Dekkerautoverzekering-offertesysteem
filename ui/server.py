@@ -281,6 +281,9 @@ def ensure_db():
         _ensure_column(conn, "no_plate_vehicles", "brandstof", "TEXT")
         _ensure_column(conn, "no_plate_vehicles", "cataloguswaarde_part", "TEXT")
         _ensure_column(conn, "no_plate_vehicles", "cataloguswaarde_zak", "TEXT")
+        _ensure_column(conn, "no_plate_vehicles", "vehicle_data_estimated", "INTEGER DEFAULT 0")
+        _ensure_column(conn, "no_plate_vehicles", "vehicle_data_source", "TEXT")
+        _ensure_column(conn, "no_plate_vehicles", "vehicle_data_confidence", "TEXT")
 
         conn.execute(
             """
@@ -1893,6 +1896,9 @@ def no_plate():
         catalogus_legacy = (request.form.get("cataloguswaarde") or "").strip()
 
         aangevuld = []
+        vehicle_data_estimated = 0
+        vehicle_data_source = ""
+        vehicle_data_confidence = ""
         if merk and model:
             try:
                 schatting = estimate_no_plate_vehicle_data(
@@ -1900,12 +1906,15 @@ def no_plate():
                     model=model,
                     type_model=type_model,
                     bouwjaar=bouwjaar,
+                    brandstof=brandstof,
                 )
             except Exception as e:
                 print("NO-PLATE SCHATTING ONVERWACHTE FOUT:", repr(e))
                 schatting = None
 
             if schatting:
+                vehicle_data_source = schatting.get("source") or "RDW"
+                vehicle_data_confidence = schatting.get("confidence") or "laag"
                 if not brandstof and schatting.get("brandstof"):
                     brandstof = str(schatting["brandstof"]).strip()
                     aangevuld.append("brandstof")
@@ -1923,6 +1932,8 @@ def no_plate():
                 if bouwjaar is None and schatting.get("bouwjaar"):
                     bouwjaar = _parse_int(schatting.get("bouwjaar"))
                     aangevuld.append("bouwjaar")
+                if aangevuld:
+                    vehicle_data_estimated = 1
 
                 print(
                     "NO-PLATE SCHATTING AANGEVULD:",
@@ -1932,6 +1943,7 @@ def no_plate():
                         "type_model": type_model,
                         "bouwjaar": bouwjaar,
                         "velden": aangevuld,
+                        "confidence": vehicle_data_confidence,
                     },
                 )
 
@@ -1957,6 +1969,9 @@ def no_plate():
             f("premie_zak_r2"),
             f("premie_zak_r3"),
             f("premie_zak_r4"),
+            vehicle_data_estimated,
+            vehicle_data_source,
+            vehicle_data_confidence,
         )
 
         with connect() as conn:
@@ -1973,7 +1988,10 @@ def no_plate():
                         cataloguswaarde_part=%s,
                         cataloguswaarde_zak=%s,
                         premie_part_r1=%s, premie_part_r2=%s, premie_part_r3=%s, premie_part_r4=%s,
-                        premie_zak_r1=%s, premie_zak_r2=%s, premie_zak_r3=%s, premie_zak_r4=%s
+                        premie_zak_r1=%s, premie_zak_r2=%s, premie_zak_r3=%s, premie_zak_r4=%s,
+                        vehicle_data_estimated=%s,
+                        vehicle_data_source=%s,
+                        vehicle_data_confidence=%s
                     WHERE id=%s
                     """,
                     data + (int(vid),),
@@ -1997,8 +2015,11 @@ def no_plate():
                         cataloguswaarde_zak,
                         premie_part_r1, premie_part_r2, premie_part_r3, premie_part_r4,
                         premie_zak_r1, premie_zak_r2, premie_zak_r3, premie_zak_r4,
+                        vehicle_data_estimated,
+                        vehicle_data_source,
+                        vehicle_data_confidence,
                         created_at
-                    ) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+                    ) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
                     """,
                     data + (created_at,),
                 )

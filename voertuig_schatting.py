@@ -9,17 +9,18 @@ import requests
 RDW_VEHICLES_URL = "https://opendata.rdw.nl/resource/m9d7-ebf2.json"
 
 
-def normalize_vehicle_query(merk, model, type_model="", bouwjaar=None):
+def normalize_vehicle_query(merk, model, type_model="", bouwjaar=None, brandstof=""):
     return {
         "merk": _clean_text(merk).upper(),
         "model": _clean_text(model),
         "type_model": _clean_text(type_model),
         "bouwjaar": _to_int(bouwjaar),
+        "brandstof": _normalize_fuel(brandstof),
     }
 
 
-def estimate_no_plate_vehicle_data(merk, model, type_model="", bouwjaar=None, timeout=8):
-    query = normalize_vehicle_query(merk, model, type_model, bouwjaar)
+def estimate_no_plate_vehicle_data(merk, model, type_model="", bouwjaar=None, brandstof="", timeout=8):
+    query = normalize_vehicle_query(merk, model, type_model, bouwjaar, brandstof)
     print(
         "NO-PLATE SCHATTING INPUT:",
         {
@@ -27,6 +28,7 @@ def estimate_no_plate_vehicle_data(merk, model, type_model="", bouwjaar=None, ti
             "model": query["model"],
             "type_model": query["type_model"],
             "bouwjaar": query["bouwjaar"],
+            "brandstof": query["brandstof"],
         },
     )
 
@@ -34,6 +36,33 @@ def estimate_no_plate_vehicle_data(merk, model, type_model="", bouwjaar=None, ti
         print("NO-PLATE SCHATTING: geen merk/model, overslaan")
         return None
 
+    rows = find_rdw_vehicle_matches(query, timeout=timeout)
+    if not rows:
+        print("NO-PLATE SCHATTING: geen RDW-resultaten")
+        return None
+
+    profile = safe_pick_vehicle_profile(rows, query)
+    if not profile:
+        print("NO-PLATE SCHATTING: geen veilig profiel gevonden")
+        return None
+
+    print(
+        "NO-PLATE SCHATTING PROFIEL:",
+        {
+            "matches": profile.get("sample_size"),
+            "confidence": profile.get("confidence"),
+            "brandstof": profile.get("brandstof"),
+            "gewicht": profile.get("gewicht"),
+            "cataloguswaarde": profile.get("cataloguswaarde"),
+            "voertuig_type": profile.get("voertuig_type"),
+            "bouwjaar": profile.get("bouwjaar"),
+            "reden": profile.get("match_reason"),
+        },
+    )
+    return profile
+
+
+def find_rdw_vehicle_matches(query, timeout=8):
     try:
         response = requests.get(
             RDW_VEHICLES_URL,
@@ -47,42 +76,38 @@ def estimate_no_plate_vehicle_data(merk, model, type_model="", bouwjaar=None, ti
         rows = response.json()
     except Exception as e:
         print("NO-PLATE SCHATTING RDW FOUT:", repr(e))
-        return None
+        return []
 
+    print("NO-PLATE SCHATTING RDW MATCHES:", len(rows))
+    return rows
+
+
+def safe_pick_vehicle_profile(rows, query):
     match_rows, match_reason = safe_pick_best_match(
         rows,
         query["model"],
         query["type_model"],
         query["bouwjaar"],
+        query["brandstof"],
     )
 
     if not match_rows:
         print("NO-PLATE SCHATTING: niets gevonden", match_reason)
         return None
 
-    result = parse_rdw_result(match_rows)
+    result = parse_rdw_vehicle_result(match_rows)
     result["match_reason"] = match_reason
     result["is_schatting"] = True
-
-    print(
-        "NO-PLATE SCHATTING MATCH:",
-        {
-            "match_reason": match_reason,
-            "sample_size": result.get("sample_size"),
-            "brandstof": result.get("brandstof"),
-            "gewicht": result.get("gewicht"),
-            "cataloguswaarde": result.get("cataloguswaarde"),
-            "voertuig_type": result.get("voertuig_type"),
-            "bouwjaar": result.get("bouwjaar"),
-        },
-    )
+    result["source"] = "RDW"
+    result["confidence"] = _confidence(match_reason, len(match_rows), bool(query["brandstof"]))
     return result
 
 
-def safe_pick_best_match(rows, model, type_model="", bouwjaar=None):
+def safe_pick_best_match(rows, model, type_model="", bouwjaar=None, brandstof=""):
     model_tokens = _tokens(model)
     type_tokens = _tokens(type_model)
     year = _to_int(bouwjaar)
+    fuel = _normalize_fuel(brandstof)
 
     if not model_tokens:
         return [], "geen modeltokens"
@@ -92,6 +117,9 @@ def safe_pick_best_match(rows, model, type_model="", bouwjaar=None):
         if _contains_all_tokens(row.get("handelsbenaming") or "", model_tokens)
     ]
     candidates = _filter_by_year(candidates, year)
+    fuel_candidates = _filter_by_fuel(candidates, fuel)
+    if fuel and fuel_candidates:
+        candidates = fuel_candidates
 
     if not candidates:
         return [], "geen modelmatch"
@@ -116,7 +144,7 @@ def safe_pick_best_match(rows, model, type_model="", bouwjaar=None):
     return candidates, "model match"
 
 
-def parse_rdw_result(rows):
+def parse_rdw_vehicle_result(rows):
     cataloguswaarden = []
     gewichten = []
     bouwjaren = []
@@ -146,6 +174,10 @@ def parse_rdw_result(rows):
         "bouwjaar": bouwjaar,
         "sample_size": len(rows),
     }
+
+
+def parse_rdw_result(rows):
+    return parse_rdw_vehicle_result(rows)
 
 
 def _clean_text(value):
@@ -212,3 +244,38 @@ def _vehicle_type_from_rdw(value):
     if "bestel" in text:
         return "bestelauto"
     return "personenauto"
+
+
+def _normalize_fuel(value):
+    text = _normalize(value)
+    if not text:
+        return ""
+    if "benzine" in text:
+        return "benzine"
+    if "diesel" in text:
+        return "diesel"
+    if "elektr" in text:
+        return "elektrisch"
+    if "hybride" in text or "hybrid" in text:
+        return "hybride"
+    if "lpg" in text:
+        return "lpg"
+    return text
+
+
+def _row_fuel(row):
+    return _normalize_fuel(row.get("brandstof_omschrijving") or row.get("brandstof") or "")
+
+
+def _filter_by_fuel(rows, fuel):
+    if not fuel:
+        return rows
+    return [row for row in rows if _row_fuel(row) == fuel]
+
+
+def _confidence(match_reason, sample_size, fuel_used):
+    if sample_size >= 3 and fuel_used and "model" in match_reason:
+        return "hoog"
+    if sample_size >= 3 and "model" in match_reason:
+        return "middel"
+    return "laag"

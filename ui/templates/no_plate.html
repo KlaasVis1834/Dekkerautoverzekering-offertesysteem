@@ -32,7 +32,7 @@
       Voertuiggegevens kunnen automatisch worden aangevuld op basis van RDW/Rolls. Controleer deze altijd handmatig.
     </div>
     <div class="muted small" style="margin-top:6px; font-weight:900;">
-      Controleer gewicht en cataloguswaarde altijd voordat u de offerte exporteert.
+      Controleer gewicht, brandstof en cataloguswaarde altijd voordat u de offerte exporteert.
     </div>
   </div>
 
@@ -172,6 +172,11 @@
         <td><span class="badge">#{{ r.id }}</span></td>
         <td style="font-weight:900;">
           {{ (r.merk or '') ~ ' ' ~ (r.model or '') ~ ' ' ~ (r.type_model or '') }}
+          {% if r.vehicle_data_estimated %}
+            <div class="muted small" style="margin-top:4px;">
+              Geschat via {{ r.vehicle_data_source or 'RDW' }}{% if r.vehicle_data_confidence %} · confidence {{ r.vehicle_data_confidence }}{% endif %}
+            </div>
+          {% endif %}
         </td>
         <td>{{ r.voertuig_type or '' }}</td>
         <td>{{ r.bouwjaar or '' }}</td>

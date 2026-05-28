@@ -35,6 +35,7 @@ from voertuigdata import get_vehicle_info
 from rules import bepaal_dekking
 from rolls_kiwa import get_meldcode_en_type
 from rdw_estimator import estimate_vehicle_data_from_rdw
+from voertuig_schatting import estimate_no_plate_vehicle_data
 from pdfgen import generate_offer_pdf
 from postgen import generate_post_letter_pdf
 from mailgen import load_template, render_template as render_mail_template, guess_aanhef_en_achternaam
@@ -1891,7 +1892,48 @@ def no_plate():
         catalogus_zak = (request.form.get("cataloguswaarde_zak") or "").strip()
         catalogus_legacy = (request.form.get("cataloguswaarde") or "").strip()
 
-                # ---------------------------------------------------------
+        aangevuld = []
+        if merk and model:
+            try:
+                schatting = estimate_no_plate_vehicle_data(
+                    merk=merk,
+                    model=model,
+                    type_model=type_model,
+                    bouwjaar=bouwjaar,
+                )
+            except Exception as e:
+                print("NO-PLATE SCHATTING ONVERWACHTE FOUT:", repr(e))
+                schatting = None
+
+            if schatting:
+                if not brandstof and schatting.get("brandstof"):
+                    brandstof = str(schatting["brandstof"]).strip()
+                    aangevuld.append("brandstof")
+                if not gewicht and schatting.get("gewicht"):
+                    gewicht = str(schatting["gewicht"]).strip()
+                    aangevuld.append("gewicht")
+                if not catalogus_part and schatting.get("cataloguswaarde"):
+                    catalogus_part = str(schatting["cataloguswaarde"]).strip()
+                    aangevuld.append("cataloguswaarde particulier")
+                if not catalogus_zak and schatting.get("cataloguswaarde"):
+                    catalogus_zak = str(schatting["cataloguswaarde"]).strip()
+                    aangevuld.append("cataloguswaarde zakelijk")
+                if not catalogus_legacy and schatting.get("cataloguswaarde"):
+                    catalogus_legacy = str(schatting["cataloguswaarde"]).strip()
+                if bouwjaar is None and schatting.get("bouwjaar"):
+                    bouwjaar = _parse_int(schatting.get("bouwjaar"))
+                    aangevuld.append("bouwjaar")
+
+                print(
+                    "NO-PLATE SCHATTING AANGEVULD:",
+                    {
+                        "merk": merk,
+                        "model": model,
+                        "type_model": type_model,
+                        "bouwjaar": bouwjaar,
+                        "velden": aangevuld,
+                    },
+                )
 
         def f(name):
             return _parse_float((request.form.get(name) or "").strip())
@@ -1936,7 +1978,10 @@ def no_plate():
                     """,
                     data + (int(vid),),
                 )
-                flash("No-plate voertuig bijgewerkt. RDW-schatting is toegepast waar velden leeg waren.", "ok")
+                if aangevuld:
+                    flash("No-plate voertuig bijgewerkt. Voertuiggegevens zijn automatisch aangevuld op basis van RDW. Controleer deze altijd handmatig.", "ok")
+                else:
+                    flash("No-plate voertuig bijgewerkt.", "ok")
             else:
                 created_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
                 _execute_retry(
@@ -1957,7 +2002,10 @@ def no_plate():
                     """,
                     data + (created_at,),
                 )
-                flash("No-plate voertuig toegevoegd. RDW-schatting is toegepast waar velden leeg waren.", "ok")
+                if aangevuld:
+                    flash("No-plate voertuig toegevoegd. Voertuiggegevens zijn automatisch aangevuld op basis van RDW. Controleer deze altijd handmatig.", "ok")
+                else:
+                    flash("No-plate voertuig toegevoegd.", "ok")
 
             conn.commit()
 

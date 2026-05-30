@@ -35,7 +35,6 @@ from voertuigdata import get_vehicle_info
 from rules import bepaal_dekking
 from rolls_kiwa import get_meldcode_en_type
 from rdw_estimator import estimate_vehicle_data_from_rdw
-from voertuig_schatting import estimate_no_plate_vehicle_data
 from pdfgen import generate_offer_pdf
 from postgen import generate_post_letter_pdf
 from mailgen import load_template, render_template as render_mail_template, guess_aanhef_en_achternaam
@@ -281,9 +280,6 @@ def ensure_db():
         _ensure_column(conn, "no_plate_vehicles", "brandstof", "TEXT")
         _ensure_column(conn, "no_plate_vehicles", "cataloguswaarde_part", "TEXT")
         _ensure_column(conn, "no_plate_vehicles", "cataloguswaarde_zak", "TEXT")
-        _ensure_column(conn, "no_plate_vehicles", "vehicle_data_estimated", "INTEGER DEFAULT 0")
-        _ensure_column(conn, "no_plate_vehicles", "vehicle_data_source", "TEXT")
-        _ensure_column(conn, "no_plate_vehicles", "vehicle_data_confidence", "TEXT")
 
         conn.execute(
             """
@@ -1895,58 +1891,6 @@ def no_plate():
         catalogus_zak = (request.form.get("cataloguswaarde_zak") or "").strip()
         catalogus_legacy = (request.form.get("cataloguswaarde") or "").strip()
 
-        aangevuld = []
-        vehicle_data_estimated = 0
-        vehicle_data_source = ""
-        vehicle_data_confidence = ""
-        if merk and model:
-            try:
-                schatting = estimate_no_plate_vehicle_data(
-                    merk=merk,
-                    model=model,
-                    type_model=type_model,
-                    bouwjaar=bouwjaar,
-                    brandstof=brandstof,
-                )
-            except Exception as e:
-                print("NO-PLATE SCHATTING ONVERWACHTE FOUT:", repr(e))
-                schatting = None
-
-            if schatting:
-                vehicle_data_source = schatting.get("source") or "RDW"
-                vehicle_data_confidence = schatting.get("confidence") or "laag"
-                if not brandstof and schatting.get("brandstof"):
-                    brandstof = str(schatting["brandstof"]).strip()
-                    aangevuld.append("brandstof")
-                if not gewicht and schatting.get("gewicht"):
-                    gewicht = str(schatting["gewicht"]).strip()
-                    aangevuld.append("gewicht")
-                if not catalogus_part and schatting.get("cataloguswaarde"):
-                    catalogus_part = str(schatting["cataloguswaarde"]).strip()
-                    aangevuld.append("cataloguswaarde particulier")
-                if not catalogus_zak and schatting.get("cataloguswaarde"):
-                    catalogus_zak = str(schatting["cataloguswaarde"]).strip()
-                    aangevuld.append("cataloguswaarde zakelijk")
-                if not catalogus_legacy and schatting.get("cataloguswaarde"):
-                    catalogus_legacy = str(schatting["cataloguswaarde"]).strip()
-                if bouwjaar is None and schatting.get("bouwjaar"):
-                    bouwjaar = _parse_int(schatting.get("bouwjaar"))
-                    aangevuld.append("bouwjaar")
-                if aangevuld:
-                    vehicle_data_estimated = 1
-
-                print(
-                    "NO-PLATE SCHATTING AANGEVULD:",
-                    {
-                        "merk": merk,
-                        "model": model,
-                        "type_model": type_model,
-                        "bouwjaar": bouwjaar,
-                        "velden": aangevuld,
-                        "confidence": vehicle_data_confidence,
-                    },
-                )
-
         def f(name):
             return _parse_float((request.form.get(name) or "").strip())
 
@@ -1969,9 +1913,6 @@ def no_plate():
             f("premie_zak_r2"),
             f("premie_zak_r3"),
             f("premie_zak_r4"),
-            vehicle_data_estimated,
-            vehicle_data_source,
-            vehicle_data_confidence,
         )
 
         with connect() as conn:
@@ -1988,18 +1929,12 @@ def no_plate():
                         cataloguswaarde_part=%s,
                         cataloguswaarde_zak=%s,
                         premie_part_r1=%s, premie_part_r2=%s, premie_part_r3=%s, premie_part_r4=%s,
-                        premie_zak_r1=%s, premie_zak_r2=%s, premie_zak_r3=%s, premie_zak_r4=%s,
-                        vehicle_data_estimated=%s,
-                        vehicle_data_source=%s,
-                        vehicle_data_confidence=%s
+                        premie_zak_r1=%s, premie_zak_r2=%s, premie_zak_r3=%s, premie_zak_r4=%s
                     WHERE id=%s
                     """,
                     data + (int(vid),),
                 )
-                if aangevuld:
-                    flash("No-plate voertuig bijgewerkt. Voertuiggegevens zijn automatisch aangevuld op basis van RDW. Controleer deze altijd handmatig.", "ok")
-                else:
-                    flash("No-plate voertuig bijgewerkt.", "ok")
+                flash("No-plate voertuig bijgewerkt.", "ok")
             else:
                 created_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
                 _execute_retry(
@@ -2015,18 +1950,12 @@ def no_plate():
                         cataloguswaarde_zak,
                         premie_part_r1, premie_part_r2, premie_part_r3, premie_part_r4,
                         premie_zak_r1, premie_zak_r2, premie_zak_r3, premie_zak_r4,
-                        vehicle_data_estimated,
-                        vehicle_data_source,
-                        vehicle_data_confidence,
                         created_at
-                    ) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+                    ) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
                     """,
                     data + (created_at,),
                 )
-                if aangevuld:
-                    flash("No-plate voertuig toegevoegd. Voertuiggegevens zijn automatisch aangevuld op basis van RDW. Controleer deze altijd handmatig.", "ok")
-                else:
-                    flash("No-plate voertuig toegevoegd.", "ok")
+                flash("No-plate voertuig toegevoegd.", "ok")
 
             conn.commit()
 

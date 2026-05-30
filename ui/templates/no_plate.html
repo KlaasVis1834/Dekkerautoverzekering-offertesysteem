@@ -7,7 +7,7 @@
       <div style="font-weight:900; font-size:18px;">No-plate voertuigen</div>
       <div class="muted">Voertuigen zonder kenteken, bijvoorbeeld auto’s die nog geleverd moeten worden.</div>
       <div class="muted small" style="margin-top:6px;">
-        Vul merk, model, type model en bouwjaar in. Lege waarden zoals cataloguswaarde, gewicht en brandstof worden bij opslaan automatisch geschat via RDW.
+        Vul merk, model, type model, bouwjaar, brandstof, gewicht, cataloguswaarde en premies handmatig in.
       </div>
     </div>
 
@@ -23,13 +23,9 @@
   <div style="font-weight:900; font-size:16px; margin-bottom:10px;">Toevoegen / Bewerken</div>
 
   <div style="background:#f8fafc; border:1px solid var(--line); border-radius:12px; padding:12px; margin-bottom:14px;">
-    <div style="font-weight:900;">RDW schatting</div>
+    <div style="font-weight:900;">Handmatige voertuiggegevens</div>
     <div class="muted small">
-      Als cataloguswaarde, gewicht of brandstof leeg zijn, probeert het systeem deze automatisch te schatten op basis van vergelijkbare RDW-registraties.
-      Handmatig ingevulde waarden blijven altijd leidend.
-    </div>
-    <div class="muted small" style="margin-top:6px;">
-      Voertuiggegevens kunnen automatisch worden aangevuld op basis van RDW/Rolls. Controleer deze altijd handmatig.
+      Voor voertuigen zonder kenteken worden geen RDW-gegevens automatisch opgehaald. De medewerker vult de voertuiggegevens zelf in.
     </div>
     <div class="muted small" style="margin-top:6px; font-weight:900;">
       Controleer gewicht, brandstof en cataloguswaarde altijd voordat u de offerte exporteert.
@@ -68,22 +64,22 @@
       </div>
       <div>
         <div class="muted small">Brandstof</div>
-        <input name="brandstof" id="f_brandstof" placeholder="Wordt geschat indien leeg" />
+        <input name="brandstof" id="f_brandstof" placeholder="Bijv. Benzine" />
       </div>
     </div>
 
     <div class="split" style="margin-top:10px;">
       <div>
         <div class="muted small">Cataloguswaarde Particulier (incl. btw)</div>
-        <input name="cataloguswaarde_part" id="f_catalogus_part" placeholder="Wordt geschat indien leeg" />
+        <input name="cataloguswaarde_part" id="f_catalogus_part" placeholder="Handmatig invullen" />
       </div>
       <div>
         <div class="muted small">Cataloguswaarde Zakelijk (excl. btw / incl. bpm)</div>
-        <input name="cataloguswaarde_zak" id="f_catalogus_zak" placeholder="Wordt geschat indien leeg" />
+        <input name="cataloguswaarde_zak" id="f_catalogus_zak" placeholder="Handmatig invullen" />
       </div>
       <div>
         <div class="muted small">Gewicht</div>
-        <input name="gewicht" id="f_gewicht" placeholder="Wordt geschat indien leeg" />
+        <input name="gewicht" id="f_gewicht" placeholder="Handmatig invullen" />
       </div>
     </div>
 
@@ -140,9 +136,9 @@
     </div>
 
     <div class="row" style="margin-top:14px;">
-      <button class="btn ok" type="submit">Opslaan en eventueel RDW schatten</button>
+      <button class="btn ok" type="submit">Opslaan</button>
       <button class="btn" type="button" onclick="clearForm()">Nieuw</button>
-      <span class="muted small">Tip: laat cataloguswaarde/gewicht/brandstof leeg als RDW dit automatisch mag schatten.</span>
+      <span class="muted small">Controleer alle no-plate gegevens handmatig voor export.</span>
     </div>
   </form>
 </div>
@@ -172,11 +168,6 @@
         <td><span class="badge">#{{ r.id }}</span></td>
         <td style="font-weight:900;">
           {{ (r.merk or '') ~ ' ' ~ (r.model or '') ~ ' ' ~ (r.type_model or '') }}
-          {% if r.vehicle_data_estimated %}
-            <div class="muted small" style="margin-top:4px;">
-              Geschat via {{ r.vehicle_data_source or 'RDW' }}{% if r.vehicle_data_confidence %} · confidence {{ r.vehicle_data_confidence }}{% endif %}
-            </div>
-          {% endif %}
         </td>
         <td>{{ r.voertuig_type or '' }}</td>
         <td>{{ r.bouwjaar or '' }}</td>

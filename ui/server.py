@@ -1915,49 +1915,69 @@ def no_plate():
             f("premie_zak_r4"),
         )
 
-        with connect() as conn:
-            if vid:
-                _execute_retry(
-                    conn,
-                    """
-                    UPDATE no_plate_vehicles
-                    SET merk=%s, model=%s, type_model=%s,
-                        voertuig_type=%s, bouwjaar=%s,
-                        brandstof=%s,
-                        cataloguswaarde=%s,
-                        gewicht=%s,
-                        cataloguswaarde_part=%s,
-                        cataloguswaarde_zak=%s,
-                        premie_part_r1=%s, premie_part_r2=%s, premie_part_r3=%s, premie_part_r4=%s,
-                        premie_zak_r1=%s, premie_zak_r2=%s, premie_zak_r3=%s, premie_zak_r4=%s
-                    WHERE id=%s
-                    """,
-                    data + (int(vid),),
-                )
-                flash("No-plate voertuig bijgewerkt.", "ok")
-            else:
-                created_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-                _execute_retry(
-                    conn,
-                    """
-                    INSERT INTO no_plate_vehicles (
-                        merk, model, type_model,
-                        voertuig_type, bouwjaar,
-                        brandstof,
-                        cataloguswaarde,
-                        gewicht,
-                        cataloguswaarde_part,
-                        cataloguswaarde_zak,
-                        premie_part_r1, premie_part_r2, premie_part_r3, premie_part_r4,
-                        premie_zak_r1, premie_zak_r2, premie_zak_r3, premie_zak_r4,
-                        created_at
-                    ) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
-                    """,
-                    data + (created_at,),
-                )
-                flash("No-plate voertuig toegevoegd.", "ok")
+        try:
+            with connect() as conn:
+                if vid:
+                    if not vid.isdigit():
+                        flash("Ongeldig no-plate voertuig id.", "error")
+                        return redirect(url_for_fresh("no_plate"))
 
-            conn.commit()
+                    saved = _execute_retry(
+                        conn,
+                        """
+                        UPDATE no_plate_vehicles
+                        SET merk=%s, model=%s, type_model=%s,
+                            voertuig_type=%s, bouwjaar=%s,
+                            brandstof=%s,
+                            cataloguswaarde=%s,
+                            gewicht=%s,
+                            cataloguswaarde_part=%s,
+                            cataloguswaarde_zak=%s,
+                            premie_part_r1=%s, premie_part_r2=%s, premie_part_r3=%s, premie_part_r4=%s,
+                            premie_zak_r1=%s, premie_zak_r2=%s, premie_zak_r3=%s, premie_zak_r4=%s
+                        WHERE id=%s
+                        RETURNING id
+                        """,
+                        data + (int(vid),),
+                    ).fetchone()
+                    if not saved:
+                        conn.rollback()
+                        flash("No-plate voertuig niet gevonden.", "error")
+                        return redirect(url_for_fresh("no_plate"))
+
+                    conn.commit()
+                    flash("No-plate voertuig bijgewerkt.", "ok")
+                else:
+                    created_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                    saved = _execute_retry(
+                        conn,
+                        """
+                        INSERT INTO no_plate_vehicles (
+                            merk, model, type_model,
+                            voertuig_type, bouwjaar,
+                            brandstof,
+                            cataloguswaarde,
+                            gewicht,
+                            cataloguswaarde_part,
+                            cataloguswaarde_zak,
+                            premie_part_r1, premie_part_r2, premie_part_r3, premie_part_r4,
+                            premie_zak_r1, premie_zak_r2, premie_zak_r3, premie_zak_r4,
+                            created_at
+                        ) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+                        RETURNING id
+                        """,
+                        data + (created_at,),
+                    ).fetchone()
+                    if not saved:
+                        conn.rollback()
+                        flash("No-plate voertuig kon niet worden opgeslagen.", "error")
+                        return redirect(url_for_fresh("no_plate"))
+
+                    conn.commit()
+                    flash("No-plate voertuig toegevoegd.", "ok")
+        except Exception as e:
+            print("NO-PLATE OPSLAAN FOUT:", repr(e))
+            flash(f"No-plate voertuig opslaan mislukt: {type(e).__name__}: {e}", "error")
 
         return redirect(url_for_fresh("no_plate"))
 

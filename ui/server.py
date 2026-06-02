@@ -1868,9 +1868,12 @@ def download_postbrief(offer_no: str):
 @app.route("/no-plate", methods=["GET", "POST"])
 @login_required
 def no_plate():
-    session.pop("_flashes", None)
-    session.modified = True
-    ensure_db()
+    try:
+        ensure_db()
+    except Exception as e:
+        print("NO-PLATE INIT FOUT:", repr(e))
+        flash(f"No-plate database initialisatie mislukt: {type(e).__name__}: {e}", "error")
+        return render_template("no_plate.html", rows=[], q="")
 
     if request.method == "POST":
         vid = (request.form.get("id") or "").strip()
@@ -1983,22 +1986,33 @@ def no_plate():
 
     q = (request.args.get("q") or "").strip()
 
-    with connect() as conn:
-        if q:
-            like = f"%{q}%"
-            rows = conn.execute(
-                """
-                SELECT * FROM no_plate_vehicles
-                WHERE merk ILIKE %s OR model ILIKE %s OR type_model ILIKE %s
-                ORDER BY created_at DESC, id DESC
-                LIMIT 500
-                """,
-                (like, like, like),
-            ).fetchall()
-        else:
-            rows = conn.execute(
-                "SELECT * FROM no_plate_vehicles ORDER BY created_at DESC, id DESC LIMIT 500"
-            ).fetchall()
+    try:
+        with connect() as conn:
+            if q:
+                like = f"%{q}%"
+                rows = conn.execute(
+                    """
+                    SELECT * FROM no_plate_vehicles
+                    WHERE COALESCE(merk, '') ILIKE %s
+                       OR COALESCE(model, '') ILIKE %s
+                       OR COALESCE(type_model, '') ILIKE %s
+                    ORDER BY COALESCE(created_at, '') DESC, id DESC
+                    LIMIT 500
+                    """,
+                    (like, like, like),
+                ).fetchall()
+            else:
+                rows = conn.execute(
+                    """
+                    SELECT * FROM no_plate_vehicles
+                    ORDER BY COALESCE(created_at, '') DESC, id DESC
+                    LIMIT 500
+                    """
+                ).fetchall()
+    except Exception as e:
+        print("NO-PLATE OPHALEN FOUT:", repr(e))
+        flash(f"No-plate voertuigen ophalen mislukt: {type(e).__name__}: {e}", "error")
+        rows = []
 
     return render_template("no_plate.html", rows=rows, q=q)
 

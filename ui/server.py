@@ -232,6 +232,22 @@ def ensure_no_plate_schema(conn):
     ]:
         _ensure_column(conn, "no_plate_vehicles", col, ddl)
 
+    seq_row = conn.execute(
+        "SELECT pg_get_serial_sequence('no_plate_vehicles', 'id') AS seq"
+    ).fetchone()
+    seq_name = seq_row["seq"] if seq_row else None
+    if seq_name:
+        conn.execute(
+            """
+            SELECT setval(
+                %s,
+                GREATEST(COALESCE((SELECT MAX(id) FROM no_plate_vehicles), 0), 1),
+                true
+            )
+            """,
+            (seq_name,),
+        )
+
 
 def seed_default_users(conn):
     now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")

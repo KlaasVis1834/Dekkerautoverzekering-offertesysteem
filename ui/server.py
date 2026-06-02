@@ -22,6 +22,7 @@ if str(PROJECT_ROOT) not in sys.path:
 
 from psycopg.rows import dict_row
 from psycopg import OperationalError
+from psycopg.errors import UniqueViolation
 from psycopg_pool import ConnectionPool
 from flask import (
     Flask, render_template, request, redirect, url_for,
@@ -157,6 +158,49 @@ def _execute_retry(conn, sql: str, params=(), retries: int = 8, sleep_s: float =
     raise last_err
 
 
+def _sequence_name_from_default(column_default: str | None) -> str | None:
+    if not column_default:
+        return None
+
+    match = re.search(r"nextval\('([^']+)'::regclass\)", column_default)
+    return match.group(1) if match else None
+
+
+def reset_no_plate_id_sequence(conn) -> bool:
+    seq_row = conn.execute(
+        "SELECT pg_get_serial_sequence('public.no_plate_vehicles', 'id') AS seq"
+    ).fetchone()
+    seq_name = seq_row["seq"] if seq_row else None
+
+    if not seq_name:
+        default_row = conn.execute(
+            """
+            SELECT column_default
+            FROM information_schema.columns
+            WHERE table_schema = 'public'
+              AND table_name = 'no_plate_vehicles'
+              AND column_name = 'id'
+            """
+        ).fetchone()
+        seq_name = _sequence_name_from_default(default_row["column_default"] if default_row else None)
+
+    if not seq_name:
+        print("NO-PLATE SEQUENCE RESET OVERGESLAGEN: geen sequence gevonden voor no_plate_vehicles.id")
+        return False
+
+    conn.execute(
+        """
+        SELECT setval(
+            %s::regclass,
+            COALESCE((SELECT MAX(id) FROM public.no_plate_vehicles), 0) + 1,
+            false
+        )
+        """,
+        (seq_name,),
+    )
+    return True
+
+
 NO_PLATE_COLUMNS = [
     "id",
     "merk",
@@ -232,21 +276,7 @@ def ensure_no_plate_schema(conn):
     ]:
         _ensure_column(conn, "no_plate_vehicles", col, ddl)
 
-    seq_row = conn.execute(
-        "SELECT pg_get_serial_sequence('no_plate_vehicles', 'id') AS seq"
-    ).fetchone()
-    seq_name = seq_row["seq"] if seq_row else None
-    if seq_name:
-        conn.execute(
-            """
-            SELECT setval(
-                %s,
-                GREATEST(COALESCE((SELECT MAX(id) FROM no_plate_vehicles), 0), 1),
-                true
-            )
-            """,
-            (seq_name,),
-        )
+    reset_no_plate_id_sequence(conn)
 
 
 def seed_default_users(conn):
@@ -2011,24 +2041,31 @@ def no_plate():
                     flash("No-plate voertuig bijgewerkt.", "ok")
                 else:
                     created_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-                    conn.execute(
-                        """
-                        INSERT INTO no_plate_vehicles (
-                            merk, model, type_model,
-                            voertuig_type, bouwjaar,
-                            brandstof,
-                            cataloguswaarde,
-                            gewicht,
-                            cataloguswaarde_part,
-                            cataloguswaarde_zak,
-                            premie_part_r1, premie_part_r2, premie_part_r3, premie_part_r4,
-                            premie_zak_r1, premie_zak_r2, premie_zak_r3, premie_zak_r4,
-                            created_at
-                        ) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
-                        RETURNING id
-                        """,
-                        data + (created_at,),
-                    ).fetchone()
+                    insert_sql = """
+                    INSERT INTO no_plate_vehicles (
+                        merk, model, type_model,
+                        voertuig_type, bouwjaar,
+                        brandstof,
+                        cataloguswaarde,
+                        gewicht,
+                        cataloguswaarde_part,
+                        cataloguswaarde_zak,
+                        premie_part_r1, premie_part_r2, premie_part_r3, premie_part_r4,
+                        premie_zak_r1, premie_zak_r2, premie_zak_r3, premie_zak_r4,
+                        created_at
+                    ) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+                    RETURNING id
+                    """
+
+                    try:
+                        conn.execute(insert_sql, data + (created_at,)).fetchone()
+                    except UniqueViolation as e:
+                        if "no_plate_vehicles_pkey" not in str(e):
+                            raise
+                        conn.rollback()
+                        print("NO-PLATE ID SEQUENCE HERSTEL NA DUPLICATE:", repr(e))
+                        ensure_no_plate_schema(conn)
+                        conn.execute(insert_sql, data + (created_at,)).fetchone()
 
                     conn.commit()
                     flash("No-plate voertuig toegevoegd.", "ok")

@@ -2194,91 +2194,95 @@ def no_plate_search():
 def set_no_plate_for_offer(offer_no: str):
     ensure_db()
     next_url = request.form.get("next") or url_for("offers")
-    vid = (request.form.get("no_plate_vehicle_id") or "").strip()
+    vid = (
+        request.form.get("no_plate_vehicle_id")
+        or request.form.get("no_plate_vehicle_select")
+        or ""
+    ).strip()
 
     if not vid.isdigit():
         flash("Kies eerst een no-plate voertuig.", "error")
         return fresh_redirect(next_url)
 
-    with connect() as conn:
-        np_row = conn.execute(
-            "SELECT * FROM no_plate_vehicles WHERE id = %s",
-            (int(vid),),
-        ).fetchone()
+    try:
+        with connect() as conn:
+            ensure_no_plate_schema(conn)
 
-        if not np_row:
-            flash("No-plate voertuig niet gevonden.", "error")
-            return fresh_redirect(next_url)
+            np_row = conn.execute(
+                "SELECT * FROM no_plate_vehicles WHERE id = %s",
+                (int(vid),),
+            ).fetchone()
 
-        # Huidige offer ophalen voor klant_type en regio
-        offer_row = conn.execute(
-            """
-            SELECT klant_type, regio
-            FROM offers
-            WHERE TRIM(offer_no) = TRIM(%s)
-            """,
-            (offer_no,),
-        ).fetchone()
+            if not np_row:
+                flash("No-plate voertuig niet gevonden.", "error")
+                return fresh_redirect(next_url)
 
-        klant_type = (
-            (offer_row["klant_type"] or "particulier").strip().lower()
-            if offer_row else "particulier"
-        )
-        regio = int(offer_row["regio"] or 0) if offer_row else 0
+            offer_row = conn.execute(
+                """
+                SELECT klant_type, regio
+                FROM offers
+                WHERE TRIM(offer_no) = TRIM(%s)
+                """,
+                (offer_no,),
+            ).fetchone()
 
-        # Premie bepalen op basis van no-plate tabel
-        np_maandpremie = _pick_np_premie(np_row, klant_type, regio)
+            klant_type = (
+                (offer_row["klant_type"] or "particulier").strip().lower()
+                if offer_row else "particulier"
+            )
+            regio = _parse_int(offer_row["regio"] if offer_row else None) or 0
 
-        _execute_retry(
-            conn,
-            """
-            UPDATE offers
-            SET no_plate_vehicle_id = %s,
-                kenteken = '',
-                merk = %s,
-                model = %s,
-                type_model = %s,
-                voertuig_type = COALESCE(NULLIF(%s,''), voertuig_type),
-                bouwjaar = COALESCE(%s, bouwjaar),
+            np_maandpremie = _pick_np_premie(np_row, klant_type, regio)
 
-                -- No-plate waarden opslaan
-                np_gewicht = %s,
-                np_cataloguswaarde = %s,
-                np_cataloguswaarde_part = %s,
-                np_cataloguswaarde_zak = %s,
-                np_maandpremie = %s,
+            updated = _execute_retry(
+                conn,
+                """
+                UPDATE offers
+                SET no_plate_vehicle_id = %s,
+                    kenteken = '',
+                    merk = %s,
+                    model = %s,
+                    type_model = %s,
+                    voertuig_type = COALESCE(NULLIF(%s,''), voertuig_type),
+                    bouwjaar = COALESCE(%s, bouwjaar),
+                    np_gewicht = %s,
+                    np_cataloguswaarde = %s,
+                    np_cataloguswaarde_part = %s,
+                    np_cataloguswaarde_zak = %s,
+                    np_maandpremie = %s,
+                    updated_by = %s,
+                    updated_at = %s
+                WHERE TRIM(offer_no) = TRIM(%s)
+                RETURNING offer_no
+                """,
+                (
+                    int(vid),
+                    (np_row["merk"] or "").strip(),
+                    (np_row["model"] or "").strip(),
+                    (np_row["type_model"] or "").strip(),
+                    (np_row["voertuig_type"] or "").strip().lower(),
+                    np_row["bouwjaar"],
+                    (np_row["gewicht"] or "").strip(),
+                    (np_row["cataloguswaarde"] or "").strip(),
+                    (np_row["cataloguswaarde_part"] or "").strip(),
+                    (np_row["cataloguswaarde_zak"] or "").strip(),
+                    np_maandpremie,
+                    current_user_display(),
+                    datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                    offer_no,
+                ),
+            ).fetchone()
 
-                updated_by = %s,
-                updated_at = %s
-            WHERE TRIM(offer_no) = TRIM(%s)
-            RETURNING offer_no
-            """,
-            (
-                int(vid),
-                (np_row["merk"] or "").strip(),
-                (np_row["model"] or "").strip(),
-                (np_row["type_model"] or "").strip(),
-                (np_row["voertuig_type"] or "").strip().lower(),
-                np_row["bouwjaar"],
+            conn.commit()
 
-                # opgeslagen no-plate waarden
-                (np_row["gewicht"] or "").strip(),
-                (np_row["cataloguswaarde"] or "").strip(),
-                (np_row["cataloguswaarde_part"] or "").strip(),
-                (np_row["cataloguswaarde_zak"] or "").strip(),
-                np_maandpremie,
+            if not updated:
+                flash(f"Offerte niet gevonden, no-plate niet gekoppeld: {offer_no}", "error")
+            else:
+                flash(f"No-plate voertuig gekoppeld aan {updated['offer_no']}.", "ok")
+    except Exception as e:
+        print("NO-PLATE KOPPELEN FOUT:", repr(e))
+        flash(f"No-plate voertuig koppelen mislukt: {type(e).__name__}: {e}", "error")
 
-                current_user_display(),
-                datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                offer_no,
-            ),
-        ).fetchone()
-        conn.commit()
-
-    if not updated:
-        flash(f"Offerte niet gevonden, no-plate niet gekoppeld: {offer_no}", "error")
-    else:
-        flash(f"No-plate voertuig gekoppeld aan {updated['offer_no']}.", "ok")
     return fresh_redirect(next_url)
 
 

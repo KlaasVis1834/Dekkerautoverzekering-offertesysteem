@@ -172,7 +172,7 @@
               style="min-width:220px;"
             />
 
-            <select id="np_select_{{ r['offer_no'] }}" onchange="npPick('{{ r['offer_no'] }}')" style="min-width:280px;">
+            <select name="no_plate_vehicle_select" id="np_select_{{ r['offer_no'] }}" onchange="npPick('{{ r['offer_no'] }}')" style="min-width:280px;">
               <option value="">— kies uit resultaten —</option>
             </select>
 
@@ -389,7 +389,7 @@
                 oninput="npSearchMobile('{{ r['offer_no'] }}', this.value)"
               />
 
-              <select id="np_select_m_{{ r['offer_no'] }}" onchange="npPickMobile('{{ r['offer_no'] }}')">
+              <select name="no_plate_vehicle_select" id="np_select_m_{{ r['offer_no'] }}" onchange="npPickMobile('{{ r['offer_no'] }}')">
                 <option value="">— kies uit resultaten —</option>
               </select>
 

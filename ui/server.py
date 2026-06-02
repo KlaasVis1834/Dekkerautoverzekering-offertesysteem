@@ -157,6 +157,82 @@ def _execute_retry(conn, sql: str, params=(), retries: int = 8, sleep_s: float =
     raise last_err
 
 
+NO_PLATE_COLUMNS = [
+    "id",
+    "merk",
+    "model",
+    "type_model",
+    "voertuig_type",
+    "bouwjaar",
+    "brandstof",
+    "cataloguswaarde",
+    "gewicht",
+    "cataloguswaarde_part",
+    "cataloguswaarde_zak",
+    "premie_part_r1",
+    "premie_part_r2",
+    "premie_part_r3",
+    "premie_part_r4",
+    "premie_zak_r1",
+    "premie_zak_r2",
+    "premie_zak_r3",
+    "premie_zak_r4",
+    "created_at",
+]
+
+
+def ensure_no_plate_schema(conn):
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS no_plate_vehicles (
+            id SERIAL PRIMARY KEY,
+            merk TEXT,
+            model TEXT,
+            type_model TEXT,
+            voertuig_type TEXT,
+            bouwjaar INTEGER,
+            brandstof TEXT,
+            cataloguswaarde TEXT,
+            gewicht TEXT,
+            cataloguswaarde_part TEXT,
+            cataloguswaarde_zak TEXT,
+            premie_part_r1 DOUBLE PRECISION,
+            premie_part_r2 DOUBLE PRECISION,
+            premie_part_r3 DOUBLE PRECISION,
+            premie_part_r4 DOUBLE PRECISION,
+            premie_zak_r1 DOUBLE PRECISION,
+            premie_zak_r2 DOUBLE PRECISION,
+            premie_zak_r3 DOUBLE PRECISION,
+            premie_zak_r4 DOUBLE PRECISION,
+            created_at TEXT
+        )
+        """
+    )
+
+    for col, ddl in [
+        ("merk", "TEXT"),
+        ("model", "TEXT"),
+        ("type_model", "TEXT"),
+        ("voertuig_type", "TEXT"),
+        ("bouwjaar", "INTEGER"),
+        ("brandstof", "TEXT"),
+        ("cataloguswaarde", "TEXT"),
+        ("gewicht", "TEXT"),
+        ("cataloguswaarde_part", "TEXT"),
+        ("cataloguswaarde_zak", "TEXT"),
+        ("premie_part_r1", "DOUBLE PRECISION"),
+        ("premie_part_r2", "DOUBLE PRECISION"),
+        ("premie_part_r3", "DOUBLE PRECISION"),
+        ("premie_part_r4", "DOUBLE PRECISION"),
+        ("premie_zak_r1", "DOUBLE PRECISION"),
+        ("premie_zak_r2", "DOUBLE PRECISION"),
+        ("premie_zak_r3", "DOUBLE PRECISION"),
+        ("premie_zak_r4", "DOUBLE PRECISION"),
+        ("created_at", "TEXT"),
+    ]:
+        _ensure_column(conn, "no_plate_vehicles", col, ddl)
+
+
 def seed_default_users(conn):
     now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
@@ -250,36 +326,7 @@ def ensure_db():
         ]:
             _ensure_column(conn, "offers", col, ddl)
 
-        conn.execute(
-            """
-            CREATE TABLE IF NOT EXISTS no_plate_vehicles (
-                id SERIAL PRIMARY KEY,
-                merk TEXT,
-                model TEXT,
-                type_model TEXT,
-                voertuig_type TEXT,
-                bouwjaar INTEGER,
-                brandstof TEXT,
-                cataloguswaarde TEXT,
-                gewicht TEXT,
-                cataloguswaarde_part TEXT,
-                cataloguswaarde_zak TEXT,
-                premie_part_r1 DOUBLE PRECISION,
-                premie_part_r2 DOUBLE PRECISION,
-                premie_part_r3 DOUBLE PRECISION,
-                premie_part_r4 DOUBLE PRECISION,
-                premie_zak_r1 DOUBLE PRECISION,
-                premie_zak_r2 DOUBLE PRECISION,
-                premie_zak_r3 DOUBLE PRECISION,
-                premie_zak_r4 DOUBLE PRECISION,
-                created_at TEXT
-            )
-            """
-        )
-
-        _ensure_column(conn, "no_plate_vehicles", "brandstof", "TEXT")
-        _ensure_column(conn, "no_plate_vehicles", "cataloguswaarde_part", "TEXT")
-        _ensure_column(conn, "no_plate_vehicles", "cataloguswaarde_zak", "TEXT")
+        ensure_no_plate_schema(conn)
 
         conn.execute(
             """
@@ -1868,12 +1915,7 @@ def download_postbrief(offer_no: str):
 @app.route("/no-plate", methods=["GET", "POST"])
 @login_required
 def no_plate():
-    try:
-        ensure_db()
-    except Exception as e:
-        print("NO-PLATE INIT FOUT:", repr(e))
-        flash(f"No-plate database initialisatie mislukt: {type(e).__name__}: {e}", "error")
-        return render_template("no_plate.html", rows=[], q="")
+    ensure_db()
 
     if request.method == "POST":
         vid = (request.form.get("id") or "").strip()
@@ -1918,15 +1960,16 @@ def no_plate():
             f("premie_zak_r4"),
         )
 
-        try:
-            with connect() as conn:
+        with connect() as conn:
+            ensure_no_plate_schema(conn)
+
+            try:
                 if vid:
                     if not vid.isdigit():
                         flash("Ongeldig no-plate voertuig id.", "error")
                         return redirect(url_for_fresh("no_plate"))
 
-                    saved = _execute_retry(
-                        conn,
+                    saved = conn.execute(
                         """
                         UPDATE no_plate_vehicles
                         SET merk=%s, model=%s, type_model=%s,
@@ -1952,8 +1995,7 @@ def no_plate():
                     flash("No-plate voertuig bijgewerkt.", "ok")
                 else:
                     created_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-                    saved = _execute_retry(
-                        conn,
+                    conn.execute(
                         """
                         INSERT INTO no_plate_vehicles (
                             merk, model, type_model,
@@ -1971,48 +2013,45 @@ def no_plate():
                         """,
                         data + (created_at,),
                     ).fetchone()
-                    if not saved:
-                        conn.rollback()
-                        flash("No-plate voertuig kon niet worden opgeslagen.", "error")
-                        return redirect(url_for_fresh("no_plate"))
 
                     conn.commit()
                     flash("No-plate voertuig toegevoegd.", "ok")
-        except Exception as e:
-            print("NO-PLATE OPSLAAN FOUT:", repr(e))
-            flash(f"No-plate voertuig opslaan mislukt: {type(e).__name__}: {e}", "error")
+            except Exception as e:
+                conn.rollback()
+                print("NO-PLATE OPSLAAN FOUT:", repr(e))
+                flash(f"No-plate voertuig opslaan mislukt: {type(e).__name__}: {e}", "error")
 
         return redirect(url_for_fresh("no_plate"))
 
     q = (request.args.get("q") or "").strip()
 
-    try:
-        with connect() as conn:
-            if q:
-                like = f"%{q}%"
-                rows = conn.execute(
-                    """
-                    SELECT * FROM no_plate_vehicles
-                    WHERE COALESCE(merk, '') ILIKE %s
-                       OR COALESCE(model, '') ILIKE %s
-                       OR COALESCE(type_model, '') ILIKE %s
-                    ORDER BY COALESCE(created_at, '') DESC, id DESC
-                    LIMIT 500
-                    """,
-                    (like, like, like),
-                ).fetchall()
-            else:
-                rows = conn.execute(
-                    """
-                    SELECT * FROM no_plate_vehicles
-                    ORDER BY COALESCE(created_at, '') DESC, id DESC
-                    LIMIT 500
-                    """
-                ).fetchall()
-    except Exception as e:
-        print("NO-PLATE OPHALEN FOUT:", repr(e))
-        flash(f"No-plate voertuigen ophalen mislukt: {type(e).__name__}: {e}", "error")
-        rows = []
+    with connect() as conn:
+        ensure_no_plate_schema(conn)
+
+        select_cols = ", ".join(NO_PLATE_COLUMNS)
+        if q:
+            like = f"%{q}%"
+            rows = conn.execute(
+                f"""
+                SELECT {select_cols}
+                FROM no_plate_vehicles
+                WHERE COALESCE(merk, '') ILIKE %s
+                   OR COALESCE(model, '') ILIKE %s
+                   OR COALESCE(type_model, '') ILIKE %s
+                ORDER BY id DESC
+                LIMIT 500
+                """,
+                (like, like, like),
+            ).fetchall()
+        else:
+            rows = conn.execute(
+                f"""
+                SELECT {select_cols}
+                FROM no_plate_vehicles
+                ORDER BY id DESC
+                LIMIT 500
+                """
+            ).fetchall()
 
     return render_template("no_plate.html", rows=rows, q=q)
 
@@ -2020,17 +2059,20 @@ def no_plate():
 @app.post("/no-plate/<int:vid>/delete")
 @login_required
 def no_plate_delete(vid: int):
-    session.pop("_flashes", None)
-    session.modified = True
     ensure_db()
-
-    session.pop("_flashes", None)
-    session.modified = True
 
     try:
         with connect() as conn:
-            _execute_retry(conn, "DELETE FROM no_plate_vehicles WHERE id = %s", (vid,))
+            ensure_no_plate_schema(conn)
+            deleted = conn.execute(
+                "DELETE FROM no_plate_vehicles WHERE id = %s RETURNING id",
+                (vid,),
+            ).fetchone()
             conn.commit()
+            if deleted:
+                flash("No-plate voertuig verwijderd.", "ok")
+            else:
+                flash("No-plate voertuig niet gevonden.", "error")
     except Exception as e:
         print("NO-PLATE DELETE FOUT:", repr(e))
         flash(f"No-plate voertuig verwijderen mislukt: {type(e).__name__}: {e}", "error")
@@ -2045,14 +2087,17 @@ def no_plate_search():
     limit = 25
 
     with connect() as conn:
+        ensure_no_plate_schema(conn)
         if q:
             like = f"%{q}%"
             rows = conn.execute(
                 """
                 SELECT id, merk, model, type_model, voertuig_type
                 FROM no_plate_vehicles
-                WHERE merk ILIKE %s OR model ILIKE %s OR type_model ILIKE %s
-                ORDER BY created_at DESC, id DESC
+                WHERE COALESCE(merk, '') ILIKE %s
+                   OR COALESCE(model, '') ILIKE %s
+                   OR COALESCE(type_model, '') ILIKE %s
+                ORDER BY id DESC
                 LIMIT %s
                 """,
                 (like, like, like, limit),
@@ -2062,7 +2107,7 @@ def no_plate_search():
                 """
                 SELECT id, merk, model, type_model, voertuig_type
                 FROM no_plate_vehicles
-                ORDER BY created_at DESC, id DESC
+                ORDER BY id DESC
                 LIMIT %s
                 """,
                 (limit,),

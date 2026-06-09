@@ -763,6 +763,8 @@ def safe_relpath(p: Path) -> str:
 
 
 def fresh_redirect(url: str):
+    url = re.sub(r"([?&])_ts=\d+(&)?", lambda m: m.group(1) if m.group(2) else "", url)
+    url = url.rstrip("?&")
     sep = "&" if "?" in url else "?"
     return redirect(f"{url}{sep}_ts={int(time.time())}")
 
@@ -774,6 +776,79 @@ def redirect_fresh(url: str):
 def url_for_fresh(endpoint: str, **values):
     values["_ts"] = int(time.time())
     return url_for(endpoint, **values)
+
+
+def sync_application_statuses(conn) -> int:
+    """Houd applications en offers gelijk voor afgehandelde aanvragen."""
+    changed = 0
+
+    changed += conn.execute(
+        """
+        UPDATE applications a
+        SET status = 'afgehandeld',
+            updated_at = COALESCE(a.updated_at, %s)
+        FROM offers o
+        WHERE TRIM(o.offer_no) = TRIM(a.offer_no)
+          AND (
+              COALESCE(o.aanvraag_status, '') = 'afgehandeld'
+              OR COALESCE(o.delivery_status, '') = 'afgehandeld'
+          )
+          AND COALESCE(a.status, 'nieuw') != 'afgehandeld'
+        """,
+        (datetime.now().strftime("%Y-%m-%d %H:%M:%S"),),
+    ).rowcount
+
+    changed += conn.execute(
+        """
+        UPDATE applications a
+        SET status = 'afgehandeld',
+            updated_at = COALESCE(a.updated_at, %s)
+        WHERE COALESCE(a.status, 'nieuw') != 'afgehandeld'
+          AND TRIM(COALESCE(a.offer_no, '')) IN (
+              SELECT TRIM(COALESCE(offer_no, ''))
+              FROM applications
+              WHERE COALESCE(status, 'nieuw') = 'afgehandeld'
+                AND TRIM(COALESCE(offer_no, '')) != ''
+          )
+        """,
+        (datetime.now().strftime("%Y-%m-%d %H:%M:%S"),),
+    ).rowcount
+
+    changed += conn.execute(
+        """
+        UPDATE offers o
+        SET aanvraag_status = 'afgehandeld',
+            delivery_status = 'afgehandeld',
+            updated_at = COALESCE(o.updated_at, %s)
+        WHERE EXISTS (
+            SELECT 1
+            FROM applications a
+            WHERE TRIM(a.offer_no) = TRIM(o.offer_no)
+              AND COALESCE(a.status, 'nieuw') = 'afgehandeld'
+        )
+          AND (
+              COALESCE(o.aanvraag_status, '') != 'afgehandeld'
+              OR COALESCE(o.delivery_status, '') != 'afgehandeld'
+          )
+        """,
+        (datetime.now().strftime("%Y-%m-%d %H:%M:%S"),),
+    ).rowcount
+
+    return changed
+
+
+def count_pending_applications(conn) -> int:
+    return conn.execute(
+        """
+        SELECT COUNT(*) AS c
+        FROM applications a
+        LEFT JOIN offers o
+          ON TRIM(o.offer_no) = TRIM(a.offer_no)
+        WHERE COALESCE(a.status, 'nieuw') = 'nieuw'
+          AND COALESCE(o.aanvraag_status, '') != 'afgehandeld'
+          AND COALESCE(o.delivery_status, '') != 'afgehandeld'
+        """
+    ).fetchone()["c"]
 
 
 def log_delivery_status_change(offer_no: str, old_status: str, new_status: str, reason: str):
@@ -1126,17 +1201,9 @@ def inject_application_counts():
     try:
         ensure_db()
         with connect() as conn:
-            pending = conn.execute(
-                """
-                SELECT COUNT(*) AS c
-                FROM applications a
-                LEFT JOIN offers o
-                  ON TRIM(o.offer_no) = TRIM(a.offer_no)
-                WHERE COALESCE(a.status, 'nieuw') = 'nieuw'
-                  AND COALESCE(o.aanvraag_status, '') != 'afgehandeld'
-                  AND COALESCE(o.delivery_status, '') != 'afgehandeld'
-                """
-            ).fetchone()["c"]
+            if sync_application_statuses(conn):
+                conn.commit()
+            pending = count_pending_applications(conn)
         return {"pending_applications_count": pending}
     except Exception:
         return {"pending_applications_count": 0}
@@ -1149,6 +1216,8 @@ def dashboard():
     last_batch_id = get_last_batch_id()
 
     with connect() as conn:
+        if sync_application_statuses(conn):
+            conn.commit()
         total = conn.execute("SELECT COUNT(*) AS c FROM offers").fetchone()["c"]
         open_deliveries = conn.execute(
             """
@@ -1157,12 +1226,14 @@ def dashboard():
             """
         ).fetchone()["c"]
         blocked = conn.execute("SELECT COUNT(*) AS c FROM offers WHERE is_blocked = 1").fetchone()["c"]
+        new_applications = count_pending_applications(conn)
 
     return render_template(
         "dashboard.html",
         total=total,
         open_deliveries=open_deliveries,
         blocked=blocked,
+        new_applications=new_applications,
         last_batch_id=last_batch_id,
         denylist_exists=denylist_exists(),
         db_path="Supabase PostgreSQL",
@@ -1293,9 +1364,11 @@ def offers():
            follow_up_due_at, call_status, decision_status,
            maandpremie, dienstverlening_bedrag,
            svj_override, is_bestaande_klant,
+           dekking_override, extra_svi, extra_rb,
            revision_of, revision_no,
            no_plate_vehicle_id, np_gewicht, np_maandpremie,
            np_cataloguswaarde, np_cataloguswaarde_part, np_cataloguswaarde_zak,
+           aanvraag_status, aanvraag_ontvangen_at, aanvraag_naam,
            created_by, updated_by, updated_at, mail_template_type
     FROM offers
     WHERE 1=1
@@ -1343,6 +1416,8 @@ def offers():
     params.extend([per_page, offset])
 
     with connect() as conn:
+        if sync_application_statuses(conn):
+            conn.commit()
         rows = conn.execute(sql, tuple(params)).fetchall()
         total_rows = conn.execute(count_sql, tuple(count_params)).fetchone()["c"]
         months = conn.execute(
@@ -1405,6 +1480,8 @@ def aanvragen():
 
     try:
         with connect() as conn:
+            if sync_application_statuses(conn):
+                conn.commit()
             rows = conn.execute(
                 """
                 SELECT
@@ -1724,50 +1801,54 @@ def update_offer_meta(offer_no: str):
 
     dienstverlening = round(maandpremie * 0.18, 2) if maandpremie is not None else None
 
-    with connect() as conn:
-        updated = _execute_retry(
-            conn,
-            """
-            UPDATE offers
-            SET maandpremie = %s,
-                dienstverlening_bedrag = %s,
-                np_maandpremie = %s,
-                svj_override = %s,
-                dekking_override = %s,
-                extra_svi = %s,
-                extra_rb = %s,
-                is_bestaande_klant = %s,
-                revision_of = %s,
-                revision_no = %s,
-                mail_template_type = %s,
-                updated_by = %s,
-                updated_at = %s
-            WHERE TRIM(offer_no) = TRIM(%s)
-            RETURNING offer_no
-            """,
-            (
-                maandpremie,
-                dienstverlening,
-                np_maandpremie,
-                svj_override,
-                dekking_override,
-                extra_svi,
-                extra_rb,
-                is_bestaande_klant,
-                revision_of,
-                revision_no,
-                mail_template_type,
-                current_user_display(),
-                datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                offer_no,
-            ),
-        ).fetchone()
-        conn.commit()
+    try:
+        with connect() as conn:
+            updated = _execute_retry(
+                conn,
+                """
+                UPDATE offers
+                SET maandpremie = %s,
+                    dienstverlening_bedrag = %s,
+                    np_maandpremie = COALESCE(%s, np_maandpremie),
+                    svj_override = %s,
+                    dekking_override = %s,
+                    extra_svi = %s,
+                    extra_rb = %s,
+                    is_bestaande_klant = %s,
+                    revision_of = %s,
+                    revision_no = %s,
+                    mail_template_type = %s,
+                    updated_by = %s,
+                    updated_at = %s
+                WHERE TRIM(offer_no) = TRIM(%s)
+                RETURNING offer_no
+                """,
+                (
+                    maandpremie,
+                    dienstverlening,
+                    np_maandpremie,
+                    svj_override,
+                    dekking_override,
+                    extra_svi,
+                    extra_rb,
+                    is_bestaande_klant,
+                    revision_of,
+                    revision_no,
+                    mail_template_type,
+                    current_user_display(),
+                    datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                    offer_no,
+                ),
+            ).fetchone()
+            conn.commit()
 
-    if not updated:
-        flash(f"Offerte niet gevonden, niets opgeslagen: {offer_no}", "error")
-    else:
-        flash(f"Gegevens opgeslagen voor {updated['offer_no']}.", "ok")
+        if not updated:
+            flash(f"Offerte niet gevonden, niets opgeslagen: {offer_no}", "error")
+        else:
+            flash(f"Gegevens opgeslagen voor {updated['offer_no']}.", "ok")
+    except Exception as e:
+        print("OFFERTE OPSLAAN FOUT:", repr(e))
+        flash(f"Offerte opslaan mislukt: {type(e).__name__}: {e}", "error")
     return fresh_redirect(next_url)
 
 
@@ -2249,7 +2330,7 @@ def set_no_plate_for_offer(offer_no: str):
                     np_cataloguswaarde = %s,
                     np_cataloguswaarde_part = %s,
                     np_cataloguswaarde_zak = %s,
-                    np_maandpremie = %s,
+                    np_maandpremie = COALESCE(%s, np_maandpremie),
                     updated_by = %s,
                     updated_at = %s
                 WHERE TRIM(offer_no) = TRIM(%s)

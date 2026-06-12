@@ -610,7 +610,21 @@ def login():
 @app.route("/logout")
 def logout():
     session.clear()
-    return redirect(url_for("login"))
+    session.modified = True
+
+    response = redirect(url_for("login"))
+    response.delete_cookie(
+        app.config.get("SESSION_COOKIE_NAME", "session"),
+        path="/",
+        secure=app.config.get("SESSION_COOKIE_SECURE", True),
+        httponly=app.config.get("SESSION_COOKIE_HTTPONLY", True),
+        samesite=app.config.get("SESSION_COOKIE_SAMESITE", "Lax"),
+    )
+    response.headers["Cache-Control"] = "private, no-store, no-cache, must-revalidate, max-age=0, s-maxage=0"
+    response.headers["Pragma"] = "no-cache"
+    response.headers["Expires"] = "0"
+    response.headers["Clear-Site-Data"] = '"cache"'
+    return response
 
 
 @app.route("/clear-flashes", methods=["GET", "POST"])

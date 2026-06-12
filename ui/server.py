@@ -91,6 +91,18 @@ def enforce_session_timeout():
         flash("Je bent automatisch uitgelogd na 15 minuten zonder activiteit.", "error")
         return redirect(url_for("login"))
 
+    try:
+        ensure_db()
+        if not refresh_current_session_user():
+            session.clear()
+            flash("Je sessie is ongeldig. Log opnieuw in.", "error")
+            return redirect(url_for("login"))
+    except Exception as e:
+        print("SESSION USER REFRESH FOUT:", repr(e))
+        session.clear()
+        flash("Je sessie kon niet veilig worden gecontroleerd. Log opnieuw in.", "error")
+        return redirect(url_for("login"))
+
     session.permanent = True
     session["last_activity"] = now
     session.modified = True
@@ -129,9 +141,53 @@ DEFAULT_USERS = [
     ("marjolein", "Marjolein", "medewerker"),
 ]
 
+DEFAULT_USER_PROFILES = {
+    username: {"display_name": display_name, "role": role}
+    for username, display_name, role in DEFAULT_USERS
+}
+
+
+def canonical_user_profile(username: str, display_name: str | None = None, role: str | None = None):
+    username_key = (username or "").strip().lower()
+    profile = DEFAULT_USER_PROFILES.get(username_key)
+    if profile:
+        return profile["display_name"], profile["role"]
+    return (display_name or username_key or "Onbekend"), (role or "medewerker")
+
 
 def current_user_display():
     return session.get("display_name") or session.get("username") or "Onbekend"
+
+
+def refresh_current_session_user():
+    user_id = session.get("user_id")
+    if not user_id:
+        return False
+
+    with connect() as conn:
+        user = conn.execute(
+            """
+            SELECT id, username, display_name, role, active
+            FROM users
+            WHERE id = %s
+            """,
+            (user_id,),
+        ).fetchone()
+
+    if not user or int(user["active"] or 1) != 1:
+        return False
+
+    display_name, role = canonical_user_profile(
+        user["username"],
+        user["display_name"],
+        user["role"],
+    )
+    session["user_id"] = user["id"]
+    session["username"] = user["username"]
+    session["display_name"] = display_name
+    session["role"] = role
+    session.modified = True
+    return True
 
 
 def admin_required(f):
@@ -331,21 +387,32 @@ def seed_default_users(conn):
     now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
     for username, display_name, role in DEFAULT_USERS:
+        canonical_display_name, canonical_role = canonical_user_profile(username, display_name, role)
         existing = conn.execute(
-            "SELECT id FROM users WHERE username = %s",
+            "SELECT id, display_name, role FROM users WHERE username = %s",
             (username,),
         ).fetchone()
 
         if existing:
+            if existing["display_name"] != canonical_display_name or existing["role"] != canonical_role:
+                conn.execute(
+                    """
+                    UPDATE users
+                    SET display_name = %s,
+                        role = %s
+                    WHERE id = %s
+                    """,
+                    (canonical_display_name, canonical_role, existing["id"]),
+                )
             continue
 
-        temp_password = f"{display_name}2026!"
+        temp_password = f"{canonical_display_name}2026!"
         conn.execute(
             """
             INSERT INTO users (username, display_name, password_hash, role, created_at, active)
             VALUES (%s, %s, %s, %s, %s, 1)
             """,
-            (username, display_name, generate_password_hash(temp_password), role, now),
+            (username, canonical_display_name, generate_password_hash(temp_password), canonical_role, now),
         )
 
 
@@ -511,12 +578,17 @@ def login():
 
         if user and check_password_hash(user["password_hash"], password):
             now_ts = int(time.time())
+            display_name, role = canonical_user_profile(
+                user["username"],
+                user["display_name"],
+                user["role"],
+            )
             session.permanent = True
             session["logged_in"] = True
             session["user_id"] = user["id"]
             session["username"] = user["username"]
-            session["display_name"] = user["display_name"]
-            session["role"] = user["role"]
+            session["display_name"] = display_name
+            session["role"] = role
             session["session_version"] = SESSION_SECURITY_VERSION
             session["last_activity"] = now_ts
             session.modified = True

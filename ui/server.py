@@ -48,6 +48,7 @@ app = Flask(__name__)
 app.config["TEMPLATES_AUTO_RELOAD"] = True
 app.jinja_env.auto_reload = True
 app.config["SEND_FILE_MAX_AGE_DEFAULT"] = 0
+app.config["SESSION_COOKIE_NAME"] = "dekker_portaal_session"
 app.config["SESSION_COOKIE_HTTPONLY"] = True
 app.config["SESSION_COOKIE_SAMESITE"] = "Lax"
 app.config["SESSION_COOKIE_SECURE"] = True
@@ -56,6 +57,8 @@ app.config["SESSION_REFRESH_EACH_REQUEST"] = True
 
 SESSION_IDLE_TIMEOUT_SECONDS = 15 * 60
 SESSION_SECURITY_VERSION = "2026-06-12-session-hardening"
+LEGACY_SESSION_COOKIE_NAMES = ("session", "dekker_portaal_session")
+SESSION_COOKIE_DELETE_DOMAINS = (None, "portaal.klaasvis.nl", ".klaasvis.nl")
 
 secret_key = os.environ.get("SECRET_KEY", "").strip()
 if secret_key:
@@ -157,6 +160,20 @@ def canonical_user_profile(username: str, display_name: str | None = None, role:
 
 def current_user_display():
     return session.get("display_name") or session.get("username") or "Onbekend"
+
+
+def expire_session_cookies(response):
+    for cookie_name in LEGACY_SESSION_COOKIE_NAMES:
+        for domain in SESSION_COOKIE_DELETE_DOMAINS:
+            response.delete_cookie(
+                cookie_name,
+                path="/",
+                domain=domain,
+                secure=app.config.get("SESSION_COOKIE_SECURE", True),
+                httponly=app.config.get("SESSION_COOKIE_HTTPONLY", True),
+                samesite=app.config.get("SESSION_COOKIE_SAMESITE", "Lax"),
+            )
+    return response
 
 
 def refresh_current_session_user():
@@ -556,6 +573,8 @@ def login():
         if flashes:
             session["_flashes"] = flashes
         session.modified = True
+        response = render_template("login.html")
+        return expire_session_cookies(app.make_response(response))
 
     if request.method == "POST":
         session.clear()
@@ -613,13 +632,7 @@ def logout():
     session.modified = True
 
     response = redirect(url_for("login"))
-    response.delete_cookie(
-        app.config.get("SESSION_COOKIE_NAME", "session"),
-        path="/",
-        secure=app.config.get("SESSION_COOKIE_SECURE", True),
-        httponly=app.config.get("SESSION_COOKIE_HTTPONLY", True),
-        samesite=app.config.get("SESSION_COOKIE_SAMESITE", "Lax"),
-    )
+    expire_session_cookies(response)
     response.headers["Cache-Control"] = "private, no-store, no-cache, must-revalidate, max-age=0, s-maxage=0"
     response.headers["Pragma"] = "no-cache"
     response.headers["Expires"] = "0"

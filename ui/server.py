@@ -10,7 +10,7 @@ import base64
 import json
 from functools import wraps
 from pathlib import Path
-from datetime import datetime
+from datetime import datetime, timedelta
 from pypdf import PdfReader, PdfWriter
 import csv
 from io import StringIO
@@ -48,16 +48,64 @@ app = Flask(__name__)
 app.config["TEMPLATES_AUTO_RELOAD"] = True
 app.jinja_env.auto_reload = True
 app.config["SEND_FILE_MAX_AGE_DEFAULT"] = 0
+app.config["SESSION_COOKIE_HTTPONLY"] = True
+app.config["SESSION_COOKIE_SAMESITE"] = "Lax"
+app.config["SESSION_COOKIE_SECURE"] = True
+app.config["PERMANENT_SESSION_LIFETIME"] = timedelta(minutes=15)
+app.config["SESSION_REFRESH_EACH_REQUEST"] = True
+
+SESSION_IDLE_TIMEOUT_SECONDS = 15 * 60
+SESSION_SECURITY_VERSION = "2026-06-12-session-hardening"
+
+secret_key = os.environ.get("SECRET_KEY", "").strip()
+if secret_key:
+    app.secret_key = secret_key
+else:
+    app.secret_key = secrets.token_hex(32)
+    print("SECURITY WARNING: SECRET_KEY ontbreekt; tijdelijke veilige key gegenereerd. Zet SECRET_KEY in Render.")
+
+
+@app.before_request
+def enforce_session_timeout():
+    if request.endpoint in {"static", "login", "logout", "api_aanvraag_ontvangen"}:
+        return None
+
+    if not session.get("logged_in"):
+        return None
+
+    now = int(time.time())
+    last_activity = session.get("last_activity")
+
+    try:
+        last_activity = int(last_activity or 0)
+    except Exception:
+        last_activity = 0
+
+    if session.get("session_version") != SESSION_SECURITY_VERSION:
+        session.clear()
+        flash("Je sessie is vernieuwd voor extra beveiliging. Log opnieuw in.", "error")
+        return redirect(url_for("login"))
+
+    if last_activity and now - last_activity > SESSION_IDLE_TIMEOUT_SECONDS:
+        session.clear()
+        flash("Je bent automatisch uitgelogd na 15 minuten zonder activiteit.", "error")
+        return redirect(url_for("login"))
+
+    session.permanent = True
+    session["last_activity"] = now
+    session.modified = True
+    return None
 
 @app.after_request
 def add_no_cache_headers(response):
-    response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0, s-maxage=0"
+    response.headers["Cache-Control"] = "private, no-store, no-cache, must-revalidate, max-age=0, s-maxage=0"
     response.headers["Pragma"] = "no-cache"
     response.headers["Expires"] = "0"
     response.headers["Surrogate-Control"] = "no-store"
+    vary = response.headers.get("Vary", "")
+    if "cookie" not in vary.lower():
+        response.headers["Vary"] = f"{vary}, Cookie".strip(", ")
     return response
-
-app.secret_key = os.environ.get("SECRET_KEY", "dekker-offertesysteem-local")
 
 DATABASE_URL = os.environ.get("DATABASE_URL", "").strip()
 LOCAL_SQLITE_DB_PATH = PROJECT_ROOT / "data" / "app.db"
@@ -436,7 +484,10 @@ def login():
     ensure_db()
 
     if request.method == "GET":
+        flashes = session.get("_flashes")
         session.clear()
+        if flashes:
+            session["_flashes"] = flashes
         session.modified = True
 
     if request.method == "POST":
@@ -459,11 +510,15 @@ def login():
             return render_template("login.html")
 
         if user and check_password_hash(user["password_hash"], password):
+            now_ts = int(time.time())
+            session.permanent = True
             session["logged_in"] = True
             session["user_id"] = user["id"]
             session["username"] = user["username"]
             session["display_name"] = user["display_name"]
             session["role"] = user["role"]
+            session["session_version"] = SESSION_SECURITY_VERSION
+            session["last_activity"] = now_ts
             session.modified = True
 
             with connect() as conn:

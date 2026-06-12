@@ -433,14 +433,13 @@ def ensure_db():
 
 @app.route("/login", methods=["GET", "POST"])
 def login():
-    session.pop("_flashes", None)
-    session.modified = True
     ensure_db()
 
-    if session.get("logged_in"):
+    if request.method == "GET" and session.get("logged_in"):
         return redirect(url_for("dashboard"))
 
     if request.method == "POST":
+        session.clear()
         username = (request.form.get("username") or "").strip().lower()
         password = request.form.get("password") or ""
 
@@ -464,6 +463,7 @@ def login():
             session["username"] = user["username"]
             session["display_name"] = user["display_name"]
             session["role"] = user["role"]
+            session.modified = True
 
             with connect() as conn:
                 conn.execute(
@@ -476,6 +476,9 @@ def login():
 
         flash("Ongeldige gebruikersnaam of wachtwoord.", "error")
 
+    if request.method == "GET":
+        session.pop("_flashes", None)
+        session.modified = True
     return render_template("login.html")
 
 

@@ -435,8 +435,9 @@ def ensure_db():
 def login():
     ensure_db()
 
-    if request.method == "GET" and session.get("logged_in"):
-        return redirect(url_for("dashboard"))
+    if request.method == "GET":
+        session.clear()
+        session.modified = True
 
     if request.method == "POST":
         session.clear()
@@ -476,9 +477,6 @@ def login():
 
         flash("Ongeldige gebruikersnaam of wachtwoord.", "error")
 
-    if request.method == "GET":
-        session.pop("_flashes", None)
-        session.modified = True
     return render_template("login.html")
 
 

@@ -8,6 +8,7 @@ import requests
 import msal
 import base64
 import json
+import hashlib
 from functools import wraps
 from pathlib import Path
 from datetime import datetime, timedelta
@@ -56,7 +57,7 @@ app.config["PERMANENT_SESSION_LIFETIME"] = timedelta(minutes=15)
 app.config["SESSION_REFRESH_EACH_REQUEST"] = True
 
 SESSION_IDLE_TIMEOUT_SECONDS = 15 * 60
-SESSION_SECURITY_VERSION = "2026-06-12-session-hardening"
+SESSION_SECURITY_VERSION = "2026-06-12-server-side-sessions"
 LEGACY_SESSION_COOKIE_NAMES = ("session", "dekker_portaal_session")
 SESSION_COOKIE_DELETE_DOMAINS = (None, "portaal.klaasvis.nl", ".klaasvis.nl")
 
@@ -96,6 +97,18 @@ def enforce_session_timeout():
 
     try:
         ensure_db()
+        with connect() as conn:
+            if not validate_server_session(
+                conn,
+                session.get("user_id"),
+                session.get("server_session_token"),
+            ):
+                conn.commit()
+                session.clear()
+                flash("Je sessie is verlopen of ongeldig. Log opnieuw in.", "error")
+                return redirect(url_for("login"))
+            conn.commit()
+
         if not refresh_current_session_user():
             session.clear()
             flash("Je sessie is ongeldig. Log opnieuw in.", "error")
@@ -106,7 +119,7 @@ def enforce_session_timeout():
         flash("Je sessie kon niet veilig worden gecontroleerd. Log opnieuw in.", "error")
         return redirect(url_for("login"))
 
-    session.permanent = True
+    session.permanent = False
     session["last_activity"] = now
     session.modified = True
     return None
@@ -114,9 +127,12 @@ def enforce_session_timeout():
 @app.after_request
 def add_no_cache_headers(response):
     response.headers["Cache-Control"] = "private, no-store, no-cache, must-revalidate, max-age=0, s-maxage=0"
+    response.headers["CDN-Cache-Control"] = "no-store"
+    response.headers["Cloudflare-CDN-Cache-Control"] = "no-store"
     response.headers["Pragma"] = "no-cache"
     response.headers["Expires"] = "0"
     response.headers["Surrogate-Control"] = "no-store"
+    response.headers["X-Accel-Expires"] = "0"
     vary = response.headers.get("Vary", "")
     if "cookie" not in vary.lower():
         response.headers["Vary"] = f"{vary}, Cookie".strip(", ")
@@ -174,6 +190,102 @@ def expire_session_cookies(response):
                 samesite=app.config.get("SESSION_COOKIE_SAMESITE", "Lax"),
             )
     return response
+
+
+def _session_token_hash(token: str) -> str:
+    return hashlib.sha256((token or "").encode("utf-8")).hexdigest()
+
+
+def _client_ip() -> str:
+    cf_ip = (request.headers.get("CF-Connecting-IP") or "").strip()
+    if cf_ip:
+        return cf_ip
+
+    forwarded = (request.headers.get("X-Forwarded-For") or "").split(",")[0].strip()
+    if forwarded:
+        return forwarded
+
+    return (request.remote_addr or "").strip()
+
+
+def _client_user_agent() -> str:
+    return (request.headers.get("User-Agent") or "").strip()[:500]
+
+
+def create_server_session(conn, user_id: int) -> str:
+    token = secrets.token_urlsafe(48)
+    now = int(time.time())
+    conn.execute(
+        """
+        INSERT INTO user_sessions (
+            user_id, token_hash, user_agent, ip_address,
+            created_at, last_seen_at, expires_at, revoked_at
+        )
+        VALUES (%s, %s, %s, %s, %s, %s, %s, NULL)
+        """,
+        (
+            user_id,
+            _session_token_hash(token),
+            _client_user_agent(),
+            _client_ip(),
+            datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            now,
+            now + SESSION_IDLE_TIMEOUT_SECONDS,
+        ),
+    )
+    return token
+
+
+def revoke_server_session(conn, token: str | None):
+    if not token:
+        return
+
+    conn.execute(
+        """
+        UPDATE user_sessions
+        SET revoked_at = %s
+        WHERE token_hash = %s
+          AND revoked_at IS NULL
+        """,
+        (datetime.now().strftime("%Y-%m-%d %H:%M:%S"), _session_token_hash(token)),
+    )
+
+
+def validate_server_session(conn, user_id: int, token: str | None) -> bool:
+    if not token:
+        return False
+
+    row = conn.execute(
+        """
+        SELECT user_id, user_agent, ip_address, expires_at, revoked_at
+        FROM user_sessions
+        WHERE token_hash = %s
+        """,
+        (_session_token_hash(token),),
+    ).fetchone()
+
+    now = int(time.time())
+    if not row or row["revoked_at"] is not None:
+        return False
+    if int(row["user_id"]) != int(user_id):
+        return False
+    if int(row["expires_at"] or 0) < now:
+        return False
+    if (row["user_agent"] or "") != _client_user_agent():
+        return False
+    if (row["ip_address"] or "") != _client_ip():
+        return False
+
+    conn.execute(
+        """
+        UPDATE user_sessions
+        SET last_seen_at = %s,
+            expires_at = %s
+        WHERE token_hash = %s
+        """,
+        (now, now + SESSION_IDLE_TIMEOUT_SECONDS, _session_token_hash(token)),
+    )
+    return True
 
 
 def refresh_current_session_user():
@@ -532,6 +644,34 @@ def ensure_db():
 
         conn.execute(
             """
+            CREATE TABLE IF NOT EXISTS user_sessions (
+                id SERIAL PRIMARY KEY,
+                user_id INTEGER NOT NULL,
+                token_hash TEXT UNIQUE NOT NULL,
+                user_agent TEXT,
+                ip_address TEXT,
+                created_at TEXT,
+                last_seen_at BIGINT,
+                expires_at BIGINT,
+                revoked_at TEXT
+            )
+            """
+        )
+
+        for col, ddl in [
+            ("user_id", "INTEGER"),
+            ("token_hash", "TEXT"),
+            ("user_agent", "TEXT"),
+            ("ip_address", "TEXT"),
+            ("created_at", "TEXT"),
+            ("last_seen_at", "BIGINT"),
+            ("expires_at", "BIGINT"),
+            ("revoked_at", "TEXT"),
+        ]:
+            _ensure_column(conn, "user_sessions", col, ddl)
+
+        conn.execute(
+            """
             CREATE TABLE IF NOT EXISTS applications (
                 id SERIAL PRIMARY KEY,
                 offer_no TEXT,
@@ -569,6 +709,11 @@ def login():
 
     if request.method == "GET":
         flashes = session.get("_flashes")
+        old_token = session.get("server_session_token")
+        if old_token:
+            with connect() as conn:
+                revoke_server_session(conn, old_token)
+                conn.commit()
         session.clear()
         if flashes:
             session["_flashes"] = flashes
@@ -602,22 +747,24 @@ def login():
                 user["display_name"],
                 user["role"],
             )
-            session.permanent = True
+            with connect() as conn:
+                server_session_token = create_server_session(conn, user["id"])
+                conn.execute(
+                    "UPDATE users SET last_login_at = %s WHERE id = %s",
+                    (datetime.now().strftime("%Y-%m-%d %H:%M:%S"), user["id"]),
+                )
+                conn.commit()
+
+            session.permanent = False
             session["logged_in"] = True
             session["user_id"] = user["id"]
             session["username"] = user["username"]
             session["display_name"] = display_name
             session["role"] = role
             session["session_version"] = SESSION_SECURITY_VERSION
+            session["server_session_token"] = server_session_token
             session["last_activity"] = now_ts
             session.modified = True
-
-            with connect() as conn:
-                conn.execute(
-                    "UPDATE users SET last_login_at = %s WHERE id = %s",
-                    (datetime.now().strftime("%Y-%m-%d %H:%M:%S"), user["id"]),
-                )
-                conn.commit()
 
             return redirect(url_for("dashboard"))
 
@@ -628,6 +775,16 @@ def login():
 
 @app.route("/logout")
 def logout():
+    old_token = session.get("server_session_token")
+    if old_token:
+        try:
+            ensure_db()
+            with connect() as conn:
+                revoke_server_session(conn, old_token)
+                conn.commit()
+        except Exception as e:
+            print("LOGOUT SESSION REVOKE FOUT:", repr(e))
+
     session.clear()
     session.modified = True
 

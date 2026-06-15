@@ -58,6 +58,61 @@ def _normalize_klant_type(raw: str) -> str:
     return "particulier"
 
 
+def _normalize_relatie_geslacht(raw: str) -> str:
+    s = _safe_str(raw).strip().lower()
+    if not s:
+        return ""
+
+    if s in {"org", "organisatie", "bedrijf", "zakelijk"}:
+        return "zakelijk"
+
+    if s in {"o", "onbekend", "unknown"}:
+        return ""
+
+    if s in {"m", "v", "man", "vrouw", "particulier"}:
+        return "particulier"
+
+    return ""
+
+
+def _looks_business_name(name: str) -> bool:
+    s = f" {_safe_str(name).lower()} "
+    markers = (
+        " b.v", " bv ", " v.o.f", " vof ", " n.v", " nv ",
+        " stichting ", " vereniging ", " holding ", " beheer ",
+        " bedrijf ", " bedrijfswagens ", " installatiebedrijf ",
+        " loodgieter", " loonbedrijf ", " aannemingsbedrijf ",
+        " bouw ", " bouwservice ", " montage ", " techniek ",
+        " elektrotechniek ", " schoonmaak ", " carwash ",
+        " totaal bouw ", " geoservices ", " adviesgroep ",
+    )
+    return any(marker in s for marker in markers)
+
+
+def _infer_klant_type(klantnaam: str, raw_klant_type: str, relatie_geslacht: str) -> str:
+    raw = _safe_str(raw_klant_type)
+    raw_lower = raw.lower()
+
+    if raw:
+        normalized = _normalize_klant_type(raw)
+        if (
+            normalized != "particulier"
+            or "particulier" in raw_lower
+            or "berijder" in raw_lower
+            or raw_lower[:2] in {"00", "10"}
+        ):
+            return normalized
+
+    from_gender = _normalize_relatie_geslacht(relatie_geslacht)
+    if from_gender:
+        return from_gender
+
+    if _looks_business_name(klantnaam):
+        return "zakelijk"
+
+    return "particulier"
+
+
 def _klant_type_sort_key(klant_type: str) -> int:
     kt = _safe_str(klant_type).lower()
     if kt == "particulier":
@@ -141,6 +196,7 @@ def import_excel(excel_path: str, denylist_path: str | None = None) -> int:
     c_type = col("Type model", "Type")
 
     c_klanttype = col("Klanttype", "Type klant", "Categorie")
+    c_relatie_geslacht = col("Relatie geslacht", "Relatiegeslacht", "Geslacht")
     c_voertuigtype = col("Voertuigtype", "Soort voertuig")
     c_bouwjaar = col("Bouwjaar", "Jaar")
 
@@ -169,12 +225,13 @@ def import_excel(excel_path: str, denylist_path: str | None = None) -> int:
             raw_kt = _safe_str(row.get(c_klanttype))
         else:
             try:
-                if len(df.columns) > 5:
+                if len(df.columns) > 5 and not c_relatie_geslacht:
                     raw_kt = _safe_str(row.iloc[5])
             except Exception:
                 raw_kt = ""
 
-        klant_type = _normalize_klant_type(raw_kt)
+        relatie_geslacht = _safe_str(row.get(c_relatie_geslacht)) if c_relatie_geslacht else ""
+        klant_type = _infer_klant_type(klantnaam, raw_kt, relatie_geslacht)
 
         voertuig_type = (_safe_str(row.get(c_voertuigtype)) if c_voertuigtype else "personenauto").lower().strip()
         if voertuig_type not in {"personenauto", "bestelauto"}:

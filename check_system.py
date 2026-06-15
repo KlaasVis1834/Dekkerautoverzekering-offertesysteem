@@ -71,6 +71,24 @@ def check_functions(source: str) -> None:
     ok("required functions exist and add_no_cache_headers is unique")
 
 
+def check_customer_name_parsing() -> None:
+    from mailgen import guess_aanhef_en_achternaam, split_dealer_customer_name
+
+    surname, initials = split_dealer_customer_name("De Jong, D.")
+    if (surname, initials) != ("De Jong", "D."):
+        fail(f"dealer name split failed: {(surname, initials)!r}")
+
+    aanhef, achternaam = guess_aanhef_en_achternaam("De Jong, D.")
+    if achternaam != "De Jong":
+        fail(f"dealer surname parsing failed: {(aanhef, achternaam)!r}")
+
+    aanhef, achternaam = guess_aanhef_en_achternaam("Mevr. J van der Meer")
+    if (aanhef, achternaam) != ("mevrouw", "van der Meer"):
+        fail(f"regular surname parsing failed: {(aanhef, achternaam)!r}")
+
+    ok("customer name parsing handles dealer format")
+
+
 def main() -> None:
     if not SERVER.exists():
         fail("ui/server.py not found")
@@ -79,6 +97,7 @@ def main() -> None:
     check_py_compile()
     check_templates_exist(source)
     check_functions(source)
+    check_customer_name_parsing()
     ok("system checks passed")
 
 

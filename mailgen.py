@@ -146,6 +146,30 @@ _TUSSENVOEGSELS = {
 }
 
 
+def split_dealer_customer_name(naam: str) -> tuple[str, str]:
+    """
+    Splitst dealerformaten zoals "De Jong, D." in achternaam en voorletters.
+    Geeft ("", "") terug als er geen bruikbare naam staat.
+    """
+    cleaned = re.sub(
+        r"\b(dhr|de\s+heer|heer|mevr|mw|mevrouw)\b\.?",
+        "",
+        (naam or "").strip(),
+        flags=re.I,
+    ).strip()
+    cleaned = re.sub(r"\s{2,}", " ", cleaned)
+    if not cleaned:
+        return "", ""
+
+    if "," in cleaned:
+        surname, initials = cleaned.split(",", 1)
+        surname = re.sub(r"\s{2,}", " ", surname).strip(" ,")
+        initials = re.sub(r"\s{2,}", " ", initials).strip(" ,")
+        return surname, initials
+
+    return "", ""
+
+
 def guess_aanhef_en_achternaam(naam: str) -> tuple[str, str]:
     """
     Probeert aanhef (heer/mevrouw) en achternaam (incl. tussenvoegsels) uit een naamregel te halen.
@@ -167,16 +191,13 @@ def guess_aanhef_en_achternaam(naam: str) -> tuple[str, str]:
     elif re.search(r"\b(dhr|de\s+heer|heer)\b\.?", low):
         aanhef = "heer"
 
+    dealer_surname, _dealer_initials = split_dealer_customer_name(n)
+    if dealer_surname:
+        return aanhef, dealer_surname
+
     # Verwijder aanhefwoorden uit de originele string (voor achternaam parsing)
     cleaned = re.sub(r"\b(dhr|de\s+heer|heer|mevr|mw|mevrouw)\b\.?", "", n, flags=re.I).strip()
     cleaned = re.sub(r"\s{2,}", " ", cleaned)
-
-    if "," in cleaned:
-        surname, _rest = cleaned.split(",", 1)
-        surname = re.sub(r"\s{2,}", " ", surname).strip()
-        if surname:
-            return aanhef, surname
-
     parts = cleaned.split()
 
     if not parts:

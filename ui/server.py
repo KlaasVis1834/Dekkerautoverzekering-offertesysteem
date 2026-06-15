@@ -39,7 +39,12 @@ from rolls_kiwa import get_meldcode_en_type
 from rdw_estimator import estimate_vehicle_data_from_rdw
 from pdfgen import generate_offer_pdf
 from postgen import generate_post_letter_pdf
-from mailgen import load_template, render_template as render_mail_template, guess_aanhef_en_achternaam
+from mailgen import (
+    load_template,
+    render_template as render_mail_template,
+    guess_aanhef_en_achternaam,
+    split_dealer_customer_name,
+)
 from bonus import herbereken_premie_op_svj
 
 AANVRAAG_LINK = "https://www.klaasvis.nl/aanvraagformulier/"
@@ -1421,6 +1426,10 @@ def _strip_known_titles(name: str) -> str:
 
 
 def _initials_from_name(full_name: str, achternaam: str) -> str:
+    dealer_surname, dealer_initials = split_dealer_customer_name(full_name)
+    if dealer_surname and dealer_initials:
+        return dealer_initials
+
     full = _strip_known_titles(full_name)
     a = (achternaam or "").strip()
 

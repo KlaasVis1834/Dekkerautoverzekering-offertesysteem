@@ -1603,8 +1603,7 @@ def import_page():
         deny_path = str(fixed_deny) if fixed_deny.exists() else None
 
         try:
-            n = import_excel(str(excel_path), deny_path)
-            batch_id = get_last_batch_id()
+            n, batch_id = import_excel(str(excel_path), deny_path, return_batch=True)
 
             if batch_id:
                 with connect() as conn:
@@ -1626,7 +1625,10 @@ def import_page():
                     conn.commit()
 
             flash(f"Import gelukt: {n} offertes toegevoegd.", "ok")
-            return redirect(url_for_fresh("offers", delivery="all"))
+            if batch_id:
+                return redirect(url_for_fresh("offers", delivery="all", batch=batch_id, page=1))
+
+            return redirect(url_for_fresh("offers", delivery="all", page=1))
 
         except Exception as e:
             print("IMPORT FOUT:", repr(e))
@@ -1656,6 +1658,7 @@ def offers():
     q = request.args.get("q", "").strip()
     month = request.args.get("month", "").strip()
     delivery = request.args.get("delivery", "").strip()
+    batch = request.args.get("batch", "").strip()
 
     try:
         page = int(request.args.get("page", "1"))
@@ -1697,6 +1700,12 @@ def offers():
         count_sql += " AND month_key = %s"
         params.append(month)
         count_params.append(month)
+
+    if batch:
+        sql += " AND batch_id = %s"
+        count_sql += " AND batch_id = %s"
+        params.append(batch)
+        count_params.append(batch)
 
     if q:
         sql += " AND (klantnaam ILIKE %s OR kenteken ILIKE %s OR email ILIKE %s OR offer_no ILIKE %s OR meldcode ILIKE %s OR chassisnummer ILIKE %s)"
@@ -1751,6 +1760,7 @@ def offers():
         q=q,
         month=month,
         delivery=delivery or "all",
+        batch=batch,
         months=[r["month_key"] for r in months],
         page=page,
         per_page=per_page,

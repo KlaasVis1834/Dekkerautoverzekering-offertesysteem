@@ -80,6 +80,9 @@
 
     <form method="get" class="row" style="margin:0;">
       <input type="hidden" name="page" value="1">
+      {% if batch %}
+        <input type="hidden" name="batch" value="{{ batch }}">
+      {% endif %}
       <input name="q" value="{{ q }}" placeholder="Zoeken..." />
       <select name="month" style="min-width:160px;">
         <option value="">Alle maanden</option>
@@ -101,6 +104,12 @@
       <a class="btn" href="{{ url_for('offers') }}">Reset</a>
     </form>
   </div>
+  {% if batch %}
+    <div class="muted small" style="margin-top:10px;">
+      Importbatch <b>{{ batch }}</b> wordt getoond.
+      <a href="{{ url_for('offers', delivery='all') }}">Alle offertes tonen</a>
+    </div>
+  {% endif %}
 </div>
 
 <div style="height:14px"></div>
@@ -534,13 +543,13 @@
 
     <div class="row">
       {% if has_prev %}
-        <a class="btn" href="{{ url_for('offers', q=q, month=month, delivery=delivery, page=page-1) }}">← Vorige</a>
+        <a class="btn" href="{{ url_for('offers', q=q, month=month, delivery=delivery, batch=batch, page=page-1) }}">← Vorige</a>
       {% else %}
         <span class="btn" style="opacity:.45; pointer-events:none;">← Vorige</span>
       {% endif %}
 
       {% if has_next %}
-        <a class="btn primary" href="{{ url_for('offers', q=q, month=month, delivery=delivery, page=page+1) }}">Volgende →</a>
+        <a class="btn primary" href="{{ url_for('offers', q=q, month=month, delivery=delivery, batch=batch, page=page+1) }}">Volgende →</a>
       {% else %}
         <span class="btn" style="opacity:.45; pointer-events:none;">Volgende →</span>
       {% endif %}

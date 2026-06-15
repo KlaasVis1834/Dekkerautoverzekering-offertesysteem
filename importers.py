@@ -181,7 +181,11 @@ def _is_valid_kenteken(k: str) -> bool:
     return True
 
 
-def import_excel(excel_path: str, denylist_path: str | None = None) -> int:
+def import_excel(
+    excel_path: str,
+    denylist_path: str | None = None,
+    return_batch: bool = False,
+) -> int | tuple[int, str]:
     now = datetime.now()
     today = now.date()
     batch = _batch_id(now)
@@ -479,6 +483,9 @@ def import_excel(excel_path: str, denylist_path: str | None = None) -> int:
             )
 
         conn.commit()
+
+    if return_batch:
+        return processed, batch
 
     return processed
 

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from datetime import date, datetime, timedelta
 from pathlib import Path
+import re
 import pandas as pd
 
 from db import connect, ensure_offer_counter, next_offer_no
@@ -44,6 +45,10 @@ def _first_nonempty(*values) -> str:
 def _compose_address(street: str, house_no: str, house_addition: str) -> str:
     parts = [_safe_str(street), _safe_str(house_no), _safe_str(house_addition)]
     return " ".join(part for part in parts if part).strip()
+
+
+def _normalize_header(header: str) -> str:
+    return re.sub(r"[^a-z0-9]+", "", _safe_str(header).lower())
 
 
 def _normalize_klant_type(raw: str) -> str:
@@ -182,11 +187,17 @@ def import_excel(excel_path: str, denylist_path: str | None = None) -> int:
     deny_entries = load_denylist_docx(str(deny_path)) if deny_path.exists() else []
 
     df = pd.read_excel(excel_path)
+    normalized_columns = {_normalize_header(c): c for c in df.columns}
 
     def col(*names):
         for n in names:
             if n in df.columns:
                 return n
+
+            normalized = _normalize_header(n)
+            if normalized in normalized_columns:
+                return normalized_columns[normalized]
+
         return None
 
     c_klantnaam = col("Klantnaam", "Naam", "Relatienaam", "Relatie")
@@ -217,6 +228,26 @@ def import_excel(excel_path: str, denylist_path: str | None = None) -> int:
     c_relatie_geslacht = col("Relatie geslacht", "Relatiegeslacht", "Geslacht")
     c_voertuigtype = col("Voertuigtype", "Soort voertuig")
     c_bouwjaar = col("Bouwjaar", "Jaar")
+
+    missing_required = []
+    for label, value in [
+        ("Relatie/klantnaam", c_klantnaam),
+        ("Relatie postcode/postcode", c_postcode),
+        ("Relatie plaats/plaats", c_plaats),
+        ("Kenteken", c_kenteken),
+        ("Merk", c_merk),
+        ("Autoomschrijving/model", c_model),
+    ]:
+        if not value:
+            missing_required.append(label)
+
+    if missing_required:
+        available = ", ".join(_safe_str(c) for c in df.columns)
+        raise ValueError(
+            "Importbestand wordt niet herkend. Ontbrekende kolommen: "
+            + ", ".join(missing_required)
+            + f". Gevonden kolommen: {available}"
+        )
 
     rows: list[dict] = []
 

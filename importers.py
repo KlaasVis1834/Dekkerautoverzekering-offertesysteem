@@ -47,6 +47,10 @@ def _compose_address(street: str, house_no: str, house_addition: str) -> str:
     return " ".join(part for part in parts if part).strip()
 
 
+def _row_has_import_data(values: list[str]) -> bool:
+    return any(_safe_str(value) for value in values)
+
+
 def _normalize_header(header: str) -> str:
     return re.sub(r"[^a-z0-9]+", "", _safe_str(header).lower())
 
@@ -251,7 +255,9 @@ def import_excel(excel_path: str, denylist_path: str | None = None) -> int:
 
     rows: list[dict] = []
 
-    for _, row in df.iterrows():
+    invalid_rows: list[str] = []
+
+    for idx, row in df.iterrows():
         klantnaam = _safe_str(row.get(c_klantnaam)) if c_klantnaam else ""
         adres = _safe_str(row.get(c_adres)) if c_adres else ""
         if not adres:
@@ -278,6 +284,9 @@ def import_excel(excel_path: str, denylist_path: str | None = None) -> int:
         merk = _safe_str(row.get(c_merk)) if c_merk else ""
         model = _safe_str(row.get(c_model)) if c_model else ""
         type_model = _safe_str(row.get(c_type)) if c_type else ""
+
+        if not _row_has_import_data([klantnaam, adres, postcode, plaats, email, telefoon, kenteken, merk, model, chassisnummer]):
+            continue
 
         raw_kt = ""
         if c_klanttype:
@@ -306,6 +315,29 @@ def import_excel(excel_path: str, denylist_path: str | None = None) -> int:
 
         regio = bepaal_regio(postcode)
 
+        missing_values = []
+        if not klantnaam:
+            missing_values.append("relatie/klantnaam")
+        if not adres:
+            missing_values.append("adres")
+        if not postcode:
+            missing_values.append("postcode")
+        if not plaats:
+            missing_values.append("plaats")
+        if regio is None:
+            missing_values.append("regio uit postcode")
+        if not merk:
+            missing_values.append("merk")
+        if not model:
+            missing_values.append("autoomschrijving/model")
+
+        if missing_values:
+            excel_row_no = idx + 2
+            invalid_rows.append(
+                f"rij {excel_row_no}: {', '.join(missing_values)}"
+            )
+            continue
+
         rows.append(
             {
                 "klantnaam": klantnaam,
@@ -326,6 +358,15 @@ def import_excel(excel_path: str, denylist_path: str | None = None) -> int:
                 "regio": regio,
             }
         )
+
+    if invalid_rows:
+        raise ValueError(
+            "Import afgebroken: niet alle verplichte gegevens konden uit het Excelbestand worden gelezen. "
+            + "; ".join(invalid_rows[:10])
+        )
+
+    if not rows:
+        raise ValueError("Import afgebroken: er zijn geen bruikbare leadregels gevonden in het Excelbestand.")
 
     rows.sort(
         key=lambda r: (

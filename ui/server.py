@@ -2875,6 +2875,63 @@ def _subject_for_offer(klant_type: str, revision_no: int, offer_no: str) -> str:
     return f"Verzekeringsvoorstel Dekkerautoverzekering {offer_no}"
 
 
+def _compact_vehicle_model_for_mail(merk: str, model: str) -> str:
+    model = re.sub(r"\s+", " ", (model or "").strip())
+    merk = re.sub(r"\s+", " ", (merk or "").strip())
+    if not model:
+        return ""
+
+    if merk and model.lower().startswith(merk.lower() + " "):
+        model = model[len(merk):].strip()
+
+    tokens = model.split()
+    picked = []
+    stop_words = {
+        "aut.", "automaat", "business", "ecoboost", "e-hybrid", "full", "hybrid",
+        "mhev", "navigatie", "phev", "premium", "pure", "skyactiv", "st-line",
+        "titanium", "tsi", "tdi", "tdci",
+    }
+
+    for token in tokens:
+        clean = token.strip(" ,.;:/()[]").lower()
+        if not clean:
+            continue
+
+        is_engine_or_trim = (
+            clean in stop_words
+            or re.fullmatch(r"\d+[.,]\d+.*", clean) is not None
+            or re.fullmatch(r"\d+\s*(pk|kw)", clean) is not None
+            or re.fullmatch(r"\d{2,3}(pk|kw)?", clean) is not None
+        )
+
+        if picked and is_engine_or_trim:
+            break
+
+        if not picked:
+            picked.append(token)
+            continue
+
+        prev = picked[-1].strip(" ,.;:/()[]").lower()
+        if prev == "model" and re.fullmatch(r"\d+", clean):
+            picked.append(token)
+            continue
+        if len(picked) == 1 and re.fullmatch(r"\d{1,2}", clean):
+            picked.append(token)
+            continue
+        if len(picked) == 1 and clean in {"wagon", "sw", "tourer", "estate"}:
+            picked.append(token)
+            continue
+        break
+
+    return " ".join(picked).strip() or model
+
+
+def _mail_vehicle_label(merk: str, model: str) -> str:
+    merk = re.sub(r"\s+", " ", (merk or "").strip())
+    model_short = _compact_vehicle_model_for_mail(merk, model)
+    return " ".join([x for x in [merk, model_short] if x]).strip() or "auto"
+
+
 def _build_pdf_and_delivery(conn, r, now: datetime):
     offer_no = r["offer_no"]
     vinfo = None
@@ -3115,9 +3172,7 @@ def _build_pdf_and_delivery(conn, r, now: datetime):
             aanhef, achternaam = guess_aanhef_en_achternaam(r["klantnaam"] or "")
             aanhefregel = f"Geachte {aanhef} {achternaam}," if achternaam else f"Geachte {aanhef},"
 
-        auto_show = " ".join(
-            [x for x in [(r["merk"] or "").strip(), (r["model"] or "").strip()] if x]
-        ).strip() or "auto"
+        auto_show = _mail_vehicle_label(r["merk"] or "", r["model"] or "")
 
         base_url = MICROSOFT_REDIRECT_URI.replace("/auth/microsoft/callback", "").rstrip("/")
         logo_url = f"{base_url}/static/logo_klaasvis.png"

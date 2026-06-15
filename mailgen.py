@@ -170,6 +170,13 @@ def guess_aanhef_en_achternaam(naam: str) -> tuple[str, str]:
     # Verwijder aanhefwoorden uit de originele string (voor achternaam parsing)
     cleaned = re.sub(r"\b(dhr|de\s+heer|heer|mevr|mw|mevrouw)\b\.?", "", n, flags=re.I).strip()
     cleaned = re.sub(r"\s{2,}", " ", cleaned)
+
+    if "," in cleaned:
+        surname, _rest = cleaned.split(",", 1)
+        surname = re.sub(r"\s{2,}", " ", surname).strip()
+        if surname:
+            return aanhef, surname
+
     parts = cleaned.split()
 
     if not parts:

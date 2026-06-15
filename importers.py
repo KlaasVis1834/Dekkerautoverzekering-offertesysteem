@@ -80,6 +80,15 @@ def _norm_kenteken(k: str) -> str:
     return "".join(ch for ch in _safe_str(k).upper() if ch.isalnum())
 
 
+def _norm_chassisnummer(chassis: str) -> str:
+    return "".join(ch for ch in _safe_str(chassis).upper() if ch.isalnum())
+
+
+def _meldcode_from_chassis(chassis: str) -> str:
+    normalized = _norm_chassisnummer(chassis)
+    return normalized[-4:] if len(normalized) >= 4 else ""
+
+
 def _is_valid_kenteken(k: str) -> bool:
     kk = _norm_kenteken(k)
     if not kk:
@@ -119,6 +128,14 @@ def import_excel(excel_path: str, denylist_path: str | None = None) -> int:
     c_tel = col("Telefoonnummer", "Telefoon", "Mobiel")
     c_email = col("E-mail", "Email", "Mail")
     c_kenteken = col("Kenteken", "LicensePlate")
+    c_chassis = col(
+        "Chassisnummer",
+        "Chassis nummer",
+        "Chassis",
+        "VIN",
+        "VIN nummer",
+        "Voertuigidentificatienummer",
+    )
     c_merk = col("Merk auto", "Merk")
     c_model = col("Model auto", "Model")
     c_type = col("Type model", "Type")
@@ -140,6 +157,8 @@ def import_excel(excel_path: str, denylist_path: str | None = None) -> int:
         kenteken_raw = _safe_str(row.get(c_kenteken)) if c_kenteken else ""
         kenteken_norm = _norm_kenteken(kenteken_raw)
         kenteken = kenteken_norm if _is_valid_kenteken(kenteken_norm) else ""
+        chassisnummer = _norm_chassisnummer(row.get(c_chassis)) if c_chassis else ""
+        meldcode = _meldcode_from_chassis(chassisnummer)
 
         merk = _safe_str(row.get(c_merk)) if c_merk else ""
         model = _safe_str(row.get(c_model)) if c_model else ""
@@ -180,6 +199,8 @@ def import_excel(excel_path: str, denylist_path: str | None = None) -> int:
                 "telefoon": telefoon,
                 "email": email,
                 "kenteken": kenteken,
+                "chassisnummer": chassisnummer,
+                "meldcode": meldcode,
                 "merk": merk,
                 "model": model,
                 "type_model": type_model,
@@ -214,6 +235,8 @@ def import_excel(excel_path: str, denylist_path: str | None = None) -> int:
             telefoon = r["telefoon"]
             email = r["email"]
             kenteken = r["kenteken"]
+            chassisnummer = r["chassisnummer"]
+            meldcode = r["meldcode"]
             merk = r["merk"]
             model = r["model"]
             type_model = r["type_model"]
@@ -247,7 +270,7 @@ def import_excel(excel_path: str, denylist_path: str | None = None) -> int:
                 INSERT INTO offers (
                     offer_no, created_at, month_key, batch_id,
                     klantnaam, adres, postcode, plaats, telefoon, email,
-                    kenteken, merk, model, type_model,
+                    kenteken, chassisnummer, meldcode, merk, model, type_model,
                     klant_type, voertuig_type,
                     bouwjaar, regio, dekking, benodigde_svj,
                     delivery_method, delivery_status,
@@ -257,7 +280,7 @@ def import_excel(excel_path: str, denylist_path: str | None = None) -> int:
                 ) VALUES (
                     %s, %s, %s, %s,
                     %s, %s, %s, %s, %s, %s,
-                    %s, %s, %s, %s,
+                    %s, %s, %s, %s, %s, %s,
                     %s, %s,
                     %s, %s, %s, %s,
                     %s, %s,
@@ -278,6 +301,8 @@ def import_excel(excel_path: str, denylist_path: str | None = None) -> int:
                     telefoon,
                     email,
                     kenteken,
+                    chassisnummer,
+                    meldcode,
                     merk,
                     model,
                     type_model,

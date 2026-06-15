@@ -43,6 +43,8 @@ def init_db() -> None:
                 email TEXT,
 
                 kenteken TEXT,
+                chassisnummer TEXT,
+                meldcode TEXT,
                 merk TEXT,
                 model TEXT,
                 type_model TEXT,

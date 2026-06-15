@@ -156,6 +156,9 @@
       <div><b>{{ (r["merk"] or "") ~ " " ~ (r["model"] or "") }}</b></div>
       <div class="muted small">{{ r["type_model"] or "—" }}</div>
       <div class="muted small">Kenteken: <b>{{ (r["kenteken"] or "-") if (r["kenteken"] or "")|trim != "" else "-" }}</b></div>
+      {% if r["meldcode"] %}
+        <div class="muted small">Meldcode: <b>{{ r["meldcode"] }}</b></div>
+      {% endif %}
 
       {% if (r["kenteken"] or "")|trim == "" %}
         <div style="margin-top:10px;">
@@ -374,6 +377,9 @@
         <div><b>{{ (r["merk"] or "") ~ " " ~ (r["model"] or "") }}</b></div>
         <div class="muted small">{{ r["type_model"] or "—" }}</div>
         <div class="muted small">Kenteken: <b>{{ (r["kenteken"] or "-") if (r["kenteken"] or "")|trim != "" else "-" }}</b></div>
+        {% if r["meldcode"] %}
+          <div class="muted small">Meldcode: <b>{{ r["meldcode"] }}</b></div>
+        {% endif %}
 
         {% if (r["kenteken"] or "")|trim == "" %}
           <div style="margin-top:10px;">

@@ -606,6 +606,8 @@ def ensure_db():
             ("updated_by", "TEXT"),
             ("updated_at", "TEXT"),
             ("mail_template_type", "TEXT DEFAULT 'auto'"),
+            ("chassisnummer", "TEXT"),
+            ("meldcode", "TEXT"),
             ("no_plate_vehicle_id", "INTEGER"),
             ("np_gewicht", "TEXT"),
             ("np_maandpremie", "DOUBLE PRECISION"),
@@ -1669,7 +1671,7 @@ def offers():
     sql = """
     SELECT offer_no, created_at, month_key, batch_id,
            klantnaam, klant_type, email, telefoon,
-           kenteken, merk, model, type_model, voertuig_type, bouwjaar,
+           kenteken, chassisnummer, meldcode, merk, model, type_model, voertuig_type, bouwjaar,
            regio, dekking,
            delivery_method, delivery_status, offer_pdf_path, eml_path, post_letter_path,
            is_blocked, block_reason, block_note,
@@ -1697,11 +1699,11 @@ def offers():
         count_params.append(month)
 
     if q:
-        sql += " AND (klantnaam ILIKE %s OR kenteken ILIKE %s OR email ILIKE %s OR offer_no ILIKE %s)"
-        count_sql += " AND (klantnaam ILIKE %s OR kenteken ILIKE %s OR email ILIKE %s OR offer_no ILIKE %s)"
+        sql += " AND (klantnaam ILIKE %s OR kenteken ILIKE %s OR email ILIKE %s OR offer_no ILIKE %s OR meldcode ILIKE %s OR chassisnummer ILIKE %s)"
+        count_sql += " AND (klantnaam ILIKE %s OR kenteken ILIKE %s OR email ILIKE %s OR offer_no ILIKE %s OR meldcode ILIKE %s OR chassisnummer ILIKE %s)"
         like = f"%{q}%"
-        params.extend([like, like, like, like])
-        count_params.extend([like, like, like, like])
+        params.extend([like, like, like, like, like, like])
+        count_params.extend([like, like, like, like, like, like])
 
     if delivery and delivery != "all":
         if delivery == "geblokkeerd":
@@ -3023,7 +3025,8 @@ def _build_pdf_and_delivery(conn, r, now: datetime):
         if voertuig_type_rolls and (not vinfo_voertuig_type) and (not db_voertuig_type):
             voertuig_type = voertuig_type_rolls.strip().lower()
 
-        meldcode_final = (meldcode_rolls or getattr(vinfo, "meldcode", "") or "—").strip()
+        meldcode_import = (r["meldcode"] if "meldcode" in r.keys() else "") or ""
+        meldcode_final = (meldcode_import or meldcode_rolls or getattr(vinfo, "meldcode", "") or "—").strip()
 
         dekking_final = _compose_dekking(
             dekking,

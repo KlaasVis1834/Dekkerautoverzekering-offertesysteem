@@ -33,6 +33,19 @@ def _followup_due(dt: date) -> str:
     return (dt + timedelta(days=7)).isoformat()
 
 
+def _first_nonempty(*values) -> str:
+    for value in values:
+        s = _safe_str(value)
+        if s:
+            return s
+    return ""
+
+
+def _compose_address(street: str, house_no: str, house_addition: str) -> str:
+    parts = [_safe_str(street), _safe_str(house_no), _safe_str(house_addition)]
+    return " ".join(part for part in parts if part).strip()
+
+
 def _normalize_klant_type(raw: str) -> str:
     s = _safe_str(raw).lower()
     if not s:
@@ -176,12 +189,17 @@ def import_excel(excel_path: str, denylist_path: str | None = None) -> int:
                 return n
         return None
 
-    c_klantnaam = col("Klantnaam", "Naam", "Relatienaam")
+    c_klantnaam = col("Klantnaam", "Naam", "Relatienaam", "Relatie")
     c_adres = col("Adres", "Straat", "Straatnaam")
-    c_postcode = col("Postcode", "Post code")
-    c_plaats = col("Woonplaats", "Plaats")
-    c_tel = col("Telefoonnummer", "Telefoon", "Mobiel")
-    c_email = col("E-mail", "Email", "Mail")
+    c_straat = col("Relatie straat", "Straat", "Straatnaam")
+    c_huisnr = col("Relatie huisnr.", "Relatie huisnummer", "Huisnummer", "Huisnr.")
+    c_huisnr_toev = col("Relatie huisnr. toev.", "Relatie huisnr toev", "Toevoeging")
+    c_postcode = col("Postcode", "Post code", "Relatie postcode")
+    c_plaats = col("Woonplaats", "Plaats", "Relatie plaats")
+    c_tel = col("Telefoonnummer", "Telefoon", "Mobiel", "Relatie tel prive")
+    c_tel_prive = col("Relatie tel prive", "Telefoon prive")
+    c_tel_mobiel = col("Relatie mobiel", "Mobiel")
+    c_email = col("E-mail", "Email", "Mail", "Relatie email")
     c_kenteken = col("Kenteken", "LicensePlate")
     c_chassis = col(
         "Chassisnummer",
@@ -192,8 +210,8 @@ def import_excel(excel_path: str, denylist_path: str | None = None) -> int:
         "Voertuigidentificatienummer",
     )
     c_merk = col("Merk auto", "Merk")
-    c_model = col("Model auto", "Model")
-    c_type = col("Type model", "Type")
+    c_model = col("Model auto", "Model", "Autoomschrijving")
+    c_type = col("Type model", "Type", "Afleveringmodel")
 
     c_klanttype = col("Klanttype", "Type klant", "Categorie")
     c_relatie_geslacht = col("Relatie geslacht", "Relatiegeslacht", "Geslacht")
@@ -205,9 +223,19 @@ def import_excel(excel_path: str, denylist_path: str | None = None) -> int:
     for _, row in df.iterrows():
         klantnaam = _safe_str(row.get(c_klantnaam)) if c_klantnaam else ""
         adres = _safe_str(row.get(c_adres)) if c_adres else ""
+        if not adres:
+            adres = _compose_address(
+                row.get(c_straat) if c_straat else "",
+                row.get(c_huisnr) if c_huisnr else "",
+                row.get(c_huisnr_toev) if c_huisnr_toev else "",
+            )
         postcode = _safe_str(row.get(c_postcode)) if c_postcode else ""
         plaats = _safe_str(row.get(c_plaats)) if c_plaats else ""
-        telefoon = _safe_str(row.get(c_tel)) if c_tel else ""
+        telefoon = _first_nonempty(
+            row.get(c_tel_mobiel) if c_tel_mobiel else "",
+            row.get(c_tel_prive) if c_tel_prive else "",
+            row.get(c_tel) if c_tel else "",
+        )
         email = _safe_str(row.get(c_email)) if c_email else ""
 
         kenteken_raw = _safe_str(row.get(c_kenteken)) if c_kenteken else ""

@@ -1088,6 +1088,17 @@ def fresh_redirect(url: str):
     return redirect(f"{url}{sep}_ts={int(time.time())}")
 
 
+def fresh_next_url(default_endpoint: str = "offers") -> str:
+    next_url = (request.form.get("next") or "").strip()
+    if not next_url or next_url.startswith(("http://", "https://", "//")):
+        next_url = url_for(default_endpoint)
+
+    if not next_url.startswith("/"):
+        next_url = "/" + next_url.lstrip("/")
+
+    return next_url
+
+
 def redirect_fresh(url: str):
     return fresh_redirect(url)
 
@@ -2035,6 +2046,25 @@ def api_aanvraag_ontvangen():
     json_path = safe_relpath(json_abs)
 
     with connect() as conn:
+        existing_offer = None
+        application_status = "nieuw"
+
+        if offer_no:
+            existing_offer = conn.execute(
+                """
+                SELECT offer_no, aanvraag_status, delivery_status
+                FROM offers
+                WHERE TRIM(offer_no) = TRIM(%s)
+                """,
+                (offer_no,),
+            ).fetchone()
+
+            if existing_offer and (
+                (existing_offer["aanvraag_status"] or "") == "afgehandeld"
+                or (existing_offer["delivery_status"] or "") == "afgehandeld"
+            ):
+                application_status = "afgehandeld"
+
         conn.execute(
             """
             INSERT INTO applications (
@@ -2049,13 +2079,14 @@ def api_aanvraag_ontvangen():
                 created_at,
                 updated_at
             )
-            VALUES (%s, %s, %s, %s, 'nieuw', 'aanvraagformulier', %s, %s, %s, %s)
+            VALUES (%s, %s, %s, %s, %s, 'aanvraagformulier', %s, %s, %s, %s)
             """,
             (
                 offer_no,
                 naam,
                 email,
                 telefoon,
+                application_status,
                 json.dumps(data, ensure_ascii=False),
                 json_path,
                 now,
@@ -2063,7 +2094,7 @@ def api_aanvraag_ontvangen():
             ),
         )
 
-        if offer_no:
+        if offer_no and application_status != "afgehandeld":
             offer_row = conn.execute(
                 """
                 UPDATE offers
@@ -2093,6 +2124,13 @@ def api_aanvraag_ontvangen():
                     "aanvraag_ontvangen",
                     "Aanvraagformulier ontvangen",
                 )
+        elif existing_offer:
+            log_delivery_status_change(
+                existing_offer["offer_no"],
+                "afgehandeld",
+                "afgehandeld",
+                "Dubbele aanvraag ontvangen; afgehandelde status behouden",
+            )
 
         conn.commit()
 
@@ -2105,7 +2143,7 @@ def api_aanvraag_ontvangen():
 @login_required
 def update_offer_meta(offer_no: str):
     ensure_db()
-    next_url = request.form.get("next") or url_for("offers")
+    next_url = fresh_next_url("offers")
 
     maandpremie = _parse_float((request.form.get("maandpremie") or "").strip())
     np_maandpremie = _parse_float((request.form.get("np_maandpremie") or "").strip())
@@ -2191,7 +2229,7 @@ def set_decision(offer_no: str):
     ensure_db()
 
     decision = (request.form.get("decision") or "").strip()
-    next_url = request.form.get("next") or url_for("offers")
+    next_url = fresh_next_url("offers")
 
     if decision not in ("akkoord", "niet_akkoord", "open", "aanvraag_ontvangen"):
         flash("Ongeldige keuze.", "error")
@@ -2236,7 +2274,7 @@ def set_decision(offer_no: str):
 def delete_offer(offer_no: str):
     ensure_db()
 
-    next_url = request.form.get("next") or url_for("offers")
+    next_url = fresh_next_url("offers")
 
     # Verwijder alle bestaande flash-meldingen direct.
     session.pop("_flashes", None)
@@ -2607,7 +2645,7 @@ def no_plate_search():
 @login_required
 def set_no_plate_for_offer(offer_no: str):
     ensure_db()
-    next_url = request.form.get("next") or url_for("offers")
+    next_url = fresh_next_url("offers")
     vid = (
         request.form.get("no_plate_vehicle_id")
         or request.form.get("no_plate_vehicle_select")
@@ -3401,7 +3439,7 @@ def export_last_batch():
 def export_one_offer(offer_no: str):
     ensure_db()
     now = datetime.now()
-    next_url = request.form.get("next") or url_for("offers")
+    next_url = fresh_next_url("offers")
 
     session.pop("_flashes", None)
     session.modified = True

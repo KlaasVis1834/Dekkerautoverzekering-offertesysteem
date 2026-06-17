@@ -42,7 +42,10 @@ from postgen import generate_post_letter_pdf
 from mailgen import (
     load_template,
     render_template as render_mail_template,
+    build_aanhefregel,
     guess_aanhef_en_achternaam,
+    normalize_person_name,
+    salutation_from_relatie_geslacht,
     split_dealer_customer_name,
 )
 from bonus import herbereken_premie_op_svj
@@ -565,6 +568,7 @@ def ensure_db():
                 month_key TEXT,
                 batch_id TEXT,
                 klantnaam TEXT,
+                relatie_geslacht TEXT,
                 klant_type TEXT,
                 adres TEXT,
                 postcode TEXT,
@@ -611,6 +615,7 @@ def ensure_db():
             ("updated_by", "TEXT"),
             ("updated_at", "TEXT"),
             ("mail_template_type", "TEXT DEFAULT 'auto'"),
+            ("relatie_geslacht", "TEXT"),
             ("chassisnummer", "TEXT"),
             ("meldcode", "TEXT"),
             ("no_plate_vehicle_id", "INTEGER"),
@@ -1462,17 +1467,21 @@ def _initials_from_name(full_name: str, achternaam: str) -> str:
     return " ".join(initials).strip()
 
 
-def _klant_display_for_filename(klantnaam: str, klant_type: str) -> str:
+def _klant_display_for_filename(
+    klantnaam: str,
+    klant_type: str,
+    relatie_geslacht: str | None = None,
+) -> str:
     kt = (klant_type or "").strip().lower()
     kn = (klantnaam or "").strip()
+    normalized = normalize_person_name(kn)
+    display_name = normalized["display"] or kn
 
     if kt == "zakelijk":
-        return kn
+        return " ".join([p for p in ["heer/mevrouw", kn] if p]).strip()
 
-    aanhef, achternaam = guess_aanhef_en_achternaam(kn)
-    initials = _initials_from_name(kn, achternaam)
-    parts = [p for p in [aanhef, initials, achternaam] if p]
-    return " ".join(parts).strip() or kn
+    aanhef = salutation_from_relatie_geslacht(relatie_geslacht, kn)
+    return " ".join([p for p in [aanhef, display_name] if p]).strip() or kn
 
 
 def _short_offer_no_for_filename(offer_no: str) -> str:
@@ -1484,9 +1493,14 @@ def _short_offer_no_for_filename(offer_no: str) -> str:
     return s
 
 
-def _offer_pdf_filename_base(klantnaam: str, klant_type: str, offer_no: str) -> str:
+def _offer_pdf_filename_base(
+    klantnaam: str,
+    klant_type: str,
+    offer_no: str,
+    relatie_geslacht: str | None = None,
+) -> str:
     return _safe_filename(
-        f"Verzekeringsvoorstel voor {_klant_display_for_filename(klantnaam, klant_type)} - {_short_offer_no_for_filename(offer_no)}"
+        f"Verzekeringsvoorstel voor {_klant_display_for_filename(klantnaam, klant_type, relatie_geslacht)} - {_short_offer_no_for_filename(offer_no)}"
     )
 
 
@@ -1693,7 +1707,7 @@ def offers():
 
     sql = """
     SELECT offer_no, created_at, month_key, batch_id,
-           klantnaam, klant_type, email, telefoon,
+           klantnaam, relatie_geslacht, klant_type, email, telefoon,
            kenteken, chassisnummer, meldcode, merk, model, type_model, voertuig_type, bouwjaar,
            regio, dekking,
            delivery_method, delivery_status, offer_pdf_path, eml_path, post_letter_path,
@@ -2368,6 +2382,7 @@ def download_postbrief(offer_no: str):
         )
 
         auto_str = " ".join([x for x in [vinfo.merk, vinfo.model] if x]).strip()
+        normalized_display_name = normalize_person_name(r["klantnaam"] or "")["display"] or (r["klantnaam"] or "")
 
         if r["post_letter_path"]:
             existing = (PROJECT_ROOT / r["post_letter_path"]).resolve()
@@ -2378,7 +2393,7 @@ def download_postbrief(offer_no: str):
             out_base_dir="data/post",
             dt=now,
             offer_no=offer_no,
-            klantnaam=r["klantnaam"] or "",
+            klantnaam=normalized_display_name,
             adres=r["adres"] or "",
             postcode=r["postcode"] or "",
             plaats=r["plaats"] or "",
@@ -2988,6 +3003,10 @@ def _build_pdf_and_delivery(conn, r, now: datetime):
     dekking_final = ""
     klant_type = (r["klant_type"] or "particulier").strip().lower()
     email = (r["email"] or "").strip() or None
+    raw_klantnaam = r["klantnaam"] or ""
+    relatie_geslacht = r["relatie_geslacht"] if "relatie_geslacht" in r.keys() else ""
+    normalized_name = normalize_person_name(raw_klantnaam)
+    normalized_display_name = normalized_name["display"] or raw_klantnaam
 
     is_bestaande_klant = int(r["is_bestaande_klant"] or 0) == 1
     revision_no = int(r["revision_no"] or 0)
@@ -3069,7 +3088,7 @@ def _build_pdf_and_delivery(conn, r, now: datetime):
             dt=now,
             offer_no=offer_no,
             klant={
-                "naam": r["klantnaam"] or "",
+                "naam": normalized_display_name,
                 "adres": r["adres"] or "",
                 "postcode": r["postcode"] or "",
                 "plaats": r["plaats"] or "",
@@ -3104,9 +3123,10 @@ def _build_pdf_and_delivery(conn, r, now: datetime):
                 "waarde_al_in_context": "1",
             },
             filename_base=_offer_pdf_filename_base(
-                r["klantnaam"] or "",
+                raw_klantnaam,
                 klant_type,
                 offer_no,
+                relatie_geslacht,
             ),
 )
 
@@ -3156,7 +3176,7 @@ def _build_pdf_and_delivery(conn, r, now: datetime):
             dt=now,
             offer_no=offer_no,
             klant={
-                "naam": r["klantnaam"] or "",
+                "naam": normalized_display_name,
                 "adres": r["adres"] or "",
                 "postcode": r["postcode"] or "",
                 "plaats": r["plaats"] or "",
@@ -3195,7 +3215,7 @@ def _build_pdf_and_delivery(conn, r, now: datetime):
     ),
     "svj_override": r["svj_override"],
 },
-            filename_base=_offer_pdf_filename_base(r["klantnaam"] or "", klant_type, offer_no),
+            filename_base=_offer_pdf_filename_base(raw_klantnaam, klant_type, offer_no, relatie_geslacht),
         )
 
     if email:
@@ -3211,13 +3231,13 @@ def _build_pdf_and_delivery(conn, r, now: datetime):
             tpl_aangepast=tpl_aangepast,
         )
 
-        if klant_type == "zakelijk":
-            aanhef = "heer/mevrouw"
-            achternaam = ""
-            aanhefregel = "Geachte heer/mevrouw,"
-        else:
-            aanhef, achternaam = guess_aanhef_en_achternaam(r["klantnaam"] or "")
-            aanhefregel = f"Geachte {aanhef} {achternaam}," if achternaam else f"Geachte {aanhef},"
+        aanhef = salutation_from_relatie_geslacht(relatie_geslacht, raw_klantnaam)
+        achternaam = normalized_name["aanhef_naam"]
+        aanhefregel = build_aanhefregel(
+            klant_type == "zakelijk",
+            raw_klantnaam,
+            relatie_geslacht,
+        )
 
         auto_show = _mail_vehicle_label(r["merk"] or "", r["model"] or "")
 
@@ -3319,7 +3339,7 @@ def _build_pdf_and_delivery(conn, r, now: datetime):
         out_base_dir="data/post",
         dt=now,
         offer_no=offer_no,
-        klantnaam=r["klantnaam"] or "",
+        klantnaam=normalized_display_name,
         adres=r["adres"] or "",
         postcode=r["postcode"] or "",
         plaats=r["plaats"] or "",
@@ -3331,7 +3351,7 @@ def _build_pdf_and_delivery(conn, r, now: datetime):
         post_letter_path=post_letter_path,
         offer_pdf_path=offer_pdf_path,
         offer_no=offer_no,
-        klantnaam=r["klantnaam"] or "",
+        klantnaam=normalized_display_name,
     )
 
     set_offer_delivery_status(

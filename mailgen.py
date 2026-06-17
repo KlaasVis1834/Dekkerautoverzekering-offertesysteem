@@ -146,28 +146,170 @@ _TUSSENVOEGSELS = {
 }
 
 
+def _clean_spaces(value: str) -> str:
+    return re.sub(r"\s+", " ", (value or "").strip())
+
+
+def _strip_titles(name: str) -> str:
+    return re.sub(
+        r"\b(dhr|de\s+heer|heer|mevr|mw|mevrouw)\b\.?",
+        "",
+        (name or "").strip(),
+        flags=re.I,
+    ).strip()
+
+
+def _format_initials(value: str) -> str:
+    raw = re.sub(r"[^A-Za-z.]+", " ", value or "").strip()
+    if not raw:
+        return ""
+
+    chunks = []
+    for part in raw.split():
+        letters = re.findall(r"[A-Za-z]", part)
+        if not letters:
+            continue
+        if "." in part:
+            chunks.extend(letters)
+        elif len(part) <= 3 and part.isupper():
+            chunks.extend(letters)
+        else:
+            chunks.append(letters[0])
+
+    return " ".join(f"{ch.upper()}." for ch in chunks)
+
+
+def _format_surname_word(value: str) -> str:
+    value = (value or "").strip(" ,")
+    if not value:
+        return ""
+    if value.isupper() or value.islower():
+        return value[:1].upper() + value[1:].lower()
+    return value[:1].upper() + value[1:]
+
+
+def _split_prefix_and_surname(tokens: list[str]) -> tuple[str, str]:
+    clean_tokens = [t.strip(" ,") for t in tokens if t.strip(" ,")]
+    if not clean_tokens:
+        return "", ""
+
+    prefix = []
+    while len(clean_tokens) > 1 and clean_tokens[0].lower().strip(".") in _TUSSENVOEGSELS:
+        prefix.append(clean_tokens.pop(0).lower().strip("."))
+
+    surname = " ".join(_format_surname_word(t) for t in clean_tokens if t)
+    return " ".join(prefix), surname
+
+
+def _split_initials_and_prefix(tokens: list[str]) -> tuple[str, str]:
+    initials = []
+    prefix = []
+
+    for token in tokens:
+        clean = token.strip(" ,")
+        if not clean:
+            continue
+
+        low = clean.lower().strip(".")
+        letters = re.findall(r"[A-Za-z]", clean)
+
+        if low in _TUSSENVOEGSELS:
+            prefix.append(low)
+            continue
+
+        if letters and (
+            "." in clean
+            or len("".join(letters)) == 1
+            or (len("".join(letters)) <= 3 and clean.isupper())
+        ):
+            initials.append(clean)
+
+    return _format_initials(" ".join(initials)), " ".join(prefix)
+
+
+def normalize_person_name(raw_name: str) -> dict[str, str]:
+    """
+    Normaliseert particuliere namen voor PDF, mail en bestandsnamen.
+    Ondersteunt o.a. "Baltaci, O.", "Vries, A. de", "De Vries, A." en "A. de Vries".
+    """
+    raw = _clean_spaces(_strip_titles(raw_name))
+    if not raw:
+        return {
+            "initials": "",
+            "tussenvoegsel": "",
+            "achternaam": "",
+            "display": "",
+            "aanhef_naam": "",
+        }
+
+    initials = ""
+    tussenvoegsel = ""
+    achternaam = ""
+
+    if "," in raw:
+        surname_part, rest = raw.split(",", 1)
+        surname_prefix, surname = _split_prefix_and_surname(surname_part.split())
+        rest_initials, rest_prefix = _split_initials_and_prefix(rest.split())
+
+        initials = rest_initials
+        tussenvoegsel = rest_prefix or surname_prefix
+        achternaam = surname
+    else:
+        tokens = raw.split()
+        initial_tokens = []
+        while tokens:
+            clean = tokens[0].strip(" ,")
+            letters = re.findall(r"[A-Za-z]", clean)
+            if letters and ("." in clean or len("".join(letters)) == 1):
+                initial_tokens.append(tokens.pop(0))
+                continue
+            break
+
+        initials = _format_initials(" ".join(initial_tokens))
+        tussenvoegsel, achternaam = _split_prefix_and_surname(tokens)
+
+        if not achternaam and tokens:
+            achternaam = _format_surname_word(tokens[-1])
+
+    aanhef_naam = " ".join([p for p in [tussenvoegsel, achternaam] if p]).strip()
+    display = " ".join([p for p in [initials, tussenvoegsel, achternaam] if p]).strip()
+
+    return {
+        "initials": initials,
+        "tussenvoegsel": tussenvoegsel,
+        "achternaam": achternaam,
+        "display": display or raw,
+        "aanhef_naam": aanhef_naam,
+    }
+
+
+def salutation_from_relatie_geslacht(relatie_geslacht: str | None, raw_name: str | None = None) -> str:
+    s = _clean_spaces(relatie_geslacht or "").lower()
+    if s in {"v", "vrouw", "mevrouw", "mevr", "mw"}:
+        return "mevrouw"
+    if s in {"m", "h", "man", "heer", "dhr", "de heer"}:
+        return "heer"
+    if s in {"o", "onbekend", "unknown", "bedrijf", "zakelijk", "org", "organisatie"}:
+        return "heer/mevrouw"
+
+    low_name = (raw_name or "").lower()
+    if re.search(r"\b(mevr|mw|mevrouw)\b\.?", low_name):
+        return "mevrouw"
+    if re.search(r"\b(dhr|de\s+heer|heer)\b\.?", low_name):
+        return "heer"
+    return "heer/mevrouw"
+
+
 def split_dealer_customer_name(naam: str) -> tuple[str, str]:
     """
     Splitst dealerformaten zoals "De Jong, D." in achternaam en voorletters.
     Geeft ("", "") terug als er geen bruikbare naam staat.
     """
-    cleaned = re.sub(
-        r"\b(dhr|de\s+heer|heer|mevr|mw|mevrouw)\b\.?",
-        "",
-        (naam or "").strip(),
-        flags=re.I,
-    ).strip()
-    cleaned = re.sub(r"\s{2,}", " ", cleaned)
-    if not cleaned:
+    normalized = normalize_person_name(naam)
+    if not normalized["achternaam"]:
         return "", ""
 
-    if "," in cleaned:
-        surname, initials = cleaned.split(",", 1)
-        surname = re.sub(r"\s{2,}", " ", surname).strip(" ,")
-        initials = re.sub(r"\s{2,}", " ", initials).strip(" ,")
-        return surname, initials
-
-    return "", ""
+    return normalized["aanhef_naam"], normalized["initials"]
 
 
 def guess_aanhef_en_achternaam(naam: str) -> tuple[str, str]:
@@ -182,53 +324,26 @@ def guess_aanhef_en_achternaam(naam: str) -> tuple[str, str]:
     if not n:
         return "heer/mevrouw", ""
 
-    low = n.lower()
-
-    # Aanhef detectie (incl. puntjes)
-    aanhef = "heer/mevrouw"
-    if re.search(r"\b(mevr|mw|mevrouw)\b\.?", low):
-        aanhef = "mevrouw"
-    elif re.search(r"\b(dhr|de\s+heer|heer)\b\.?", low):
-        aanhef = "heer"
-
-    dealer_surname, _dealer_initials = split_dealer_customer_name(n)
-    if dealer_surname:
-        return aanhef, dealer_surname
-
-    # Verwijder aanhefwoorden uit de originele string (voor achternaam parsing)
-    cleaned = re.sub(r"\b(dhr|de\s+heer|heer|mevr|mw|mevrouw)\b\.?", "", n, flags=re.I).strip()
-    cleaned = re.sub(r"\s{2,}", " ", cleaned)
-    parts = cleaned.split()
-
-    if not parts:
-        return aanhef, ""
-
-    # Achternaam van achteren opbouwen, incl. tussenvoegsels
-    surname_parts = [parts[-1]]
-    i = len(parts) - 2
-    while i >= 0:
-        token = parts[i]
-        token_low = token.lower().strip(".")
-        if token_low in _TUSSENVOEGSELS:
-            surname_parts.insert(0, token)
-            i -= 1
-            continue
-        break
-
-    achternaam = " ".join(surname_parts)
-    return aanhef, achternaam
+    aanhef = salutation_from_relatie_geslacht(None, n)
+    normalized = normalize_person_name(n)
+    return aanhef, normalized["aanhef_naam"]
 
 
-def build_aanhefregel(is_zakelijk: bool, naam: str | None = None) -> str:
+def build_aanhefregel(
+    is_zakelijk: bool,
+    naam: str | None = None,
+    relatie_geslacht: str | None = None,
+) -> str:
     """
     Maakt exact de aanhefregel die in de template komt.
     - Zakelijk: altijd "Geachte heer/mevrouw,"
     - Particulier: "Geachte <heer/mevrouw> <achternaam>,"
     """
-    if is_zakelijk:
+    aanhef = salutation_from_relatie_geslacht(relatie_geslacht, naam)
+    if is_zakelijk or aanhef == "heer/mevrouw":
         return "Geachte heer/mevrouw,"
 
-    aanhef, achternaam = guess_aanhef_en_achternaam(naam or "")
-    if achternaam:
-        return f"Geachte {aanhef} {achternaam},"
-    return f"Geachte {aanhef},"
+    normalized = normalize_person_name(naam or "")
+    if normalized["aanhef_naam"]:
+        return f"Geachte {aanhef} {normalized['aanhef_naam']},"
+    return "Geachte heer/mevrouw,"

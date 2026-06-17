@@ -345,6 +345,7 @@ def import_excel(
         rows.append(
             {
                 "klantnaam": klantnaam,
+                "relatie_geslacht": relatie_geslacht,
                 "adres": adres,
                 "postcode": postcode,
                 "plaats": plaats,
@@ -390,6 +391,7 @@ def import_excel(
             processed += 1
 
             klantnaam = r["klantnaam"]
+            relatie_geslacht = r["relatie_geslacht"]
             adres = r["adres"]
             postcode = r["postcode"]
             plaats = r["plaats"]
@@ -430,7 +432,7 @@ def import_excel(
                 """
                 INSERT INTO offers (
                     offer_no, created_at, month_key, batch_id,
-                    klantnaam, adres, postcode, plaats, telefoon, email,
+                    klantnaam, relatie_geslacht, adres, postcode, plaats, telefoon, email,
                     kenteken, chassisnummer, meldcode, merk, model, type_model,
                     klant_type, voertuig_type,
                     bouwjaar, regio, dekking, benodigde_svj,
@@ -440,7 +442,7 @@ def import_excel(
                     mail_template_type
                 ) VALUES (
                     %s, %s, %s, %s,
-                    %s, %s, %s, %s, %s, %s,
+                    %s, %s, %s, %s, %s, %s, %s,
                     %s, %s, %s, %s, %s, %s,
                     %s, %s,
                     %s, %s, %s, %s,
@@ -456,6 +458,7 @@ def import_excel(
                     mk,
                     batch,
                     klantnaam,
+                    relatie_geslacht,
                     adres,
                     postcode,
                     plaats,

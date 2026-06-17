@@ -72,19 +72,46 @@ def check_functions(source: str) -> None:
 
 
 def check_customer_name_parsing() -> None:
-    from mailgen import guess_aanhef_en_achternaam, split_dealer_customer_name
+    from mailgen import (
+        build_aanhefregel,
+        guess_aanhef_en_achternaam,
+        normalize_person_name,
+        split_dealer_customer_name,
+    )
 
     surname, initials = split_dealer_customer_name("De Jong, D.")
-    if (surname, initials) != ("De Jong", "D."):
+    if (surname, initials) != ("de Jong", "D."):
         fail(f"dealer name split failed: {(surname, initials)!r}")
 
+    cases = {
+        "Baltaci, O.": "O. Baltaci",
+        "Vries, A. de": "A. de Vries",
+        "De Vries, A.": "A. de Vries",
+        "A. de Vries": "A. de Vries",
+        "O. Baltaci": "O. Baltaci",
+    }
+
+    for raw, expected in cases.items():
+        actual = normalize_person_name(raw)["display"]
+        if actual != expected:
+            fail(f"name normalization failed for {raw!r}: {actual!r}")
+
     aanhef, achternaam = guess_aanhef_en_achternaam("De Jong, D.")
-    if achternaam != "De Jong":
+    if achternaam != "de Jong":
         fail(f"dealer surname parsing failed: {(aanhef, achternaam)!r}")
 
     aanhef, achternaam = guess_aanhef_en_achternaam("Mevr. J van der Meer")
     if (aanhef, achternaam) != ("mevrouw", "van der Meer"):
         fail(f"regular surname parsing failed: {(aanhef, achternaam)!r}")
+
+    if build_aanhefregel(False, "Vries, A. de", "V") != "Geachte mevrouw de Vries,":
+        fail("female salutation failed")
+
+    if build_aanhefregel(False, "Baltaci, O.", "M") != "Geachte heer Baltaci,":
+        fail("male salutation failed")
+
+    if build_aanhefregel(False, "Jansen, P.", "O") != "Geachte heer/mevrouw,":
+        fail("unknown salutation failed")
 
     ok("customer name parsing handles dealer format")
 

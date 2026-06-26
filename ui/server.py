@@ -43,6 +43,7 @@ from mailgen import (
     load_template,
     render_template as render_mail_template,
     build_aanhefregel,
+    filename_salutation_from_relatie_geslacht,
     guess_aanhef_en_achternaam,
     normalize_person_name,
     salutation_from_relatie_geslacht,
@@ -619,6 +620,10 @@ def ensure_db():
             ("mail_template_type", "TEXT DEFAULT 'auto'"),
             ("relatie_geslacht", "TEXT"),
             ("chassisnummer", "TEXT"),
+            ("straat", "TEXT"),
+            ("huisnummer", "TEXT"),
+            ("huisnummer_toevoeging", "TEXT"),
+            ("occasion", "TEXT"),
             ("meldcode", "TEXT"),
             ("no_plate_vehicle_id", "INTEGER"),
             ("np_gewicht", "TEXT"),
@@ -1482,9 +1487,9 @@ def _klant_display_for_filename(
     display_name = normalized["display"] or kn
 
     if kt == "zakelijk":
-        return " ".join([p for p in ["heer/mevrouw", kn] if p]).strip()
+        return " ".join([p for p in ["de heer/mevrouw", kn] if p]).strip()
 
-    aanhef = salutation_from_relatie_geslacht(relatie_geslacht, kn)
+    aanhef = filename_salutation_from_relatie_geslacht(relatie_geslacht, kn)
     return " ".join([p for p in [aanhef, display_name] if p]).strip() or kn
 
 
@@ -3103,6 +3108,7 @@ def _build_pdf_and_delivery(conn, r, now: datetime):
             voertuig={
                 "auto": auto_str,
                 "kenteken": "",
+                "chassisnummer": "",
                 "brandstof": brandstof_final,
                 "voertuig_type": voertuig_type,
                 "merk": np_merk,
@@ -3191,6 +3197,7 @@ def _build_pdf_and_delivery(conn, r, now: datetime):
             voertuig={
                 "auto": auto_str,
                 "kenteken": kenteken_display,
+                "chassisnummer": r["chassisnummer"] if "chassisnummer" in r.keys() else "",
                 "brandstof": getattr(vinfo, "brandstof", "") or "",
                 "voertuig_type": voertuig_type,
                 "merk": getattr(vinfo, "merk", "") or (r["merk"] or ""),

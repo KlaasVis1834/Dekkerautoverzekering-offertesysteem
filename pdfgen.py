@@ -457,6 +457,7 @@ def generate_offer_pdf(
 
     auto_basic = _auto_zonder_uitvoering(voertuig)
     kenteken = _safe(voertuig.get("kenteken"))
+    chassisnummer = _safe(voertuig.get("chassisnummer"))
 
     # ✅ FIX: geen kenteken -> toon '-' bij Kenteken en Meldcode
     kenteken_display = kenteken if kenteken else "-"
@@ -566,6 +567,8 @@ def generate_offer_pdf(
     yv = y_voertuig
     yv = _kv(c, voertuig_x, yv, "Auto", auto_basic, col_w=28 * mm)
     yv = _kv(c, voertuig_x, yv, "Kenteken", kenteken_display, col_w=28 * mm)
+    if chassisnummer:
+        yv = _kv(c, voertuig_x, yv, "Chassisnummer", chassisnummer, col_w=28 * mm)
     yv = _kv(c, voertuig_x, yv, "Bouwjaar", bouwjaar, col_w=28 * mm)
     yv = _kv(c, voertuig_x, yv, "Brandstof", brandstof, col_w=28 * mm)
     yv = _kv(c, voertuig_x, yv, "Meldcode", meldcode_display, col_w=28 * mm)

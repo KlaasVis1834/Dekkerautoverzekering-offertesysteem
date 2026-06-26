@@ -74,7 +74,9 @@ def check_functions(source: str) -> None:
 def check_customer_name_parsing() -> None:
     from mailgen import (
         build_aanhefregel,
+        filename_salutation_from_relatie_geslacht,
         guess_aanhef_en_achternaam,
+        normalize_customer_name,
         normalize_person_name,
         split_dealer_customer_name,
     )
@@ -96,6 +98,10 @@ def check_customer_name_parsing() -> None:
         if actual != expected:
             fail(f"name normalization failed for {raw!r}: {actual!r}")
 
+        alias_actual = normalize_customer_name(raw)["display"]
+        if alias_actual != expected:
+            fail(f"customer name normalization failed for {raw!r}: {alias_actual!r}")
+
     aanhef, achternaam = guess_aanhef_en_achternaam("De Jong, D.")
     if achternaam != "de Jong":
         fail(f"dealer surname parsing failed: {(aanhef, achternaam)!r}")
@@ -112,6 +118,15 @@ def check_customer_name_parsing() -> None:
 
     if build_aanhefregel(False, "Jansen, P.", "O") != "Geachte heer/mevrouw,":
         fail("unknown salutation failed")
+
+    if filename_salutation_from_relatie_geslacht("M") != "de heer":
+        fail("male filename salutation failed")
+
+    if filename_salutation_from_relatie_geslacht("V") != "mevrouw":
+        fail("female filename salutation failed")
+
+    if filename_salutation_from_relatie_geslacht("Z") != "de heer/mevrouw":
+        fail("business filename salutation failed")
 
     ok("customer name parsing handles dealer format")
 

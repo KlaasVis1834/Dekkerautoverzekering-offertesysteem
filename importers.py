@@ -8,6 +8,7 @@ import pandas as pd
 from db import connect, ensure_offer_counter, next_offer_no
 from rules import bepaal_regio, bepaal_dekking, benodigde_svj
 from denylist import load_denylist_docx
+from mailgen import normalize_person_name
 
 
 DEFAULT_DENYLIST = Path("data/denylist/Lijstje GEEN leads.docx")
@@ -55,6 +56,37 @@ def _normalize_header(header: str) -> str:
     return re.sub(r"[^a-z0-9]+", "", _safe_str(header).lower())
 
 
+def _read_excel_with_detected_header(excel_path: str) -> pd.DataFrame:
+    preview = pd.read_excel(excel_path, header=None, nrows=12)
+    for idx, row in preview.iterrows():
+        normalized = {_normalize_header(v) for v in row.tolist() if _safe_str(v)}
+        if {"relatie", "datumverkoop"}.issubset(normalized) or {"klantnaam", "orderdatum"}.issubset(normalized):
+            return pd.read_excel(excel_path, header=int(idx))
+    return pd.read_excel(excel_path)
+
+
+def _detect_import_format(df: pd.DataFrame) -> str:
+    normalized = {_normalize_header(c) for c in df.columns}
+    if {"relatie", "datumverkoop"}.issubset(normalized):
+        return "nieuw"
+    if {"klantnaam", "orderdatum"}.issubset(normalized):
+        return "oud"
+    raise ValueError("Onbekend Excel-formaat. Controleer kolomnamen.")
+
+
+def _normalize_relatie_geslacht_code(raw: str) -> str:
+    s = _safe_str(raw).strip().upper()
+    if s in {"M", "MAN", "HEER", "H", "DHR", "DE HEER"}:
+        return "M"
+    if s in {"V", "VROUW", "MEVROUW", "MEVR", "MW"}:
+        return "V"
+    if s in {"Z", "ZAKELIJK", "BEDRIJF", "ORG", "ORGANISATIE"}:
+        return "Z"
+    if s in {"O", "ONBEKEND", "UNKNOWN"}:
+        return "O"
+    return "O"
+
+
 def _normalize_klant_type(raw: str) -> str:
     s = _safe_str(raw).lower()
     if not s:
@@ -81,19 +113,11 @@ def _normalize_klant_type(raw: str) -> str:
 
 
 def _normalize_relatie_geslacht(raw: str) -> str:
-    s = _safe_str(raw).strip().lower()
-    if not s:
-        return ""
-
-    if s in {"org", "organisatie", "bedrijf", "zakelijk"}:
+    code = _normalize_relatie_geslacht_code(raw)
+    if code == "Z":
         return "zakelijk"
-
-    if s in {"o", "onbekend", "unknown"}:
-        return ""
-
-    if s in {"m", "v", "man", "vrouw", "particulier"}:
+    if code in {"M", "V", "O"}:
         return "particulier"
-
     return ""
 
 
@@ -133,6 +157,29 @@ def _infer_klant_type(klantnaam: str, raw_klant_type: str, relatie_geslacht: str
         return "zakelijk"
 
     return "particulier"
+
+
+def _format_created_at(value, fallback: str) -> str:
+    if value is None or _safe_str(value) == "":
+        return fallback
+    try:
+        ts = pd.to_datetime(value)
+        if pd.isna(ts):
+            return fallback
+        return ts.strftime("%Y-%m-%d %H:%M:%S")
+    except Exception:
+        return fallback
+
+
+def _normalize_occasion(raw: str) -> str:
+    s = _safe_str(raw).strip().lower()
+    if not s:
+        return ""
+    if "gebruik" in s or s in {"ja", "j", "occasion", "used"}:
+        return "gebruikt"
+    if "nieuw" in s or s in {"nee", "n", "new"}:
+        return "nieuw"
+    return _safe_str(raw)
 
 
 def _klant_type_sort_key(klant_type: str) -> int:
@@ -194,7 +241,8 @@ def import_excel(
     deny_path = Path(denylist_path) if denylist_path else DEFAULT_DENYLIST
     deny_entries = load_denylist_docx(str(deny_path)) if deny_path.exists() else []
 
-    df = pd.read_excel(excel_path)
+    df = _read_excel_with_detected_header(excel_path)
+    import_format = _detect_import_format(df)
     normalized_columns = {_normalize_header(c): c for c in df.columns}
 
     def col(*names):
@@ -208,7 +256,9 @@ def import_excel(
 
         return None
 
-    c_klantnaam = col("Klantnaam", "Naam", "Relatienaam", "Relatie")
+    c_orderdatum = col("Orderdatum", "Datum verkoop")
+    c_verkoper = col("Verkoper")
+    c_klantnaam = col("Relatie") if import_format == "nieuw" else col("Klantnaam", "Naam", "Relatienaam")
     c_adres = col("Adres", "Straat", "Straatnaam")
     c_straat = col("Relatie straat", "Straat", "Straatnaam")
     c_huisnr = col("Relatie huisnr.", "Relatie huisnummer", "Huisnummer", "Huisnr.")
@@ -229,8 +279,10 @@ def import_excel(
         "Voertuigidentificatienummer",
     )
     c_merk = col("Merk auto", "Merk")
-    c_model = col("Model auto", "Model", "Autoomschrijving")
-    c_type = col("Type model", "Type", "Afleveringmodel")
+    c_model = col("Afleveringmodel") if import_format == "nieuw" else col("Model auto", "Model")
+    c_model_fallback = col("Autoomschrijving")
+    c_type = col("Autoomschrijving") if import_format == "nieuw" else col("Type model", "Type")
+    c_occasion = col("Occasion", "Nieuw Gebruikt")
 
     c_klanttype = col("Klanttype", "Type klant", "Categorie")
     c_relatie_geslacht = col("Relatie geslacht", "Relatiegeslacht", "Geslacht")
@@ -244,7 +296,7 @@ def import_excel(
         ("Relatie plaats/plaats", c_plaats),
         ("Kenteken", c_kenteken),
         ("Merk", c_merk),
-        ("Autoomschrijving/model", c_model),
+        ("Autoomschrijving/model", c_model or c_model_fallback),
     ]:
         if not value:
             missing_required.append(label)
@@ -263,13 +315,14 @@ def import_excel(
 
     for idx, row in df.iterrows():
         klantnaam = _safe_str(row.get(c_klantnaam)) if c_klantnaam else ""
+        row_created_at = _format_created_at(row.get(c_orderdatum) if c_orderdatum else None, created_at)
+        verkoper = _safe_str(row.get(c_verkoper)) if c_verkoper else ""
+        straat = _safe_str(row.get(c_straat)) if c_straat else ""
+        huisnummer = _safe_str(row.get(c_huisnr)) if c_huisnr else ""
+        huisnummer_toevoeging = _safe_str(row.get(c_huisnr_toev)) if c_huisnr_toev else ""
         adres = _safe_str(row.get(c_adres)) if c_adres else ""
         if not adres:
-            adres = _compose_address(
-                row.get(c_straat) if c_straat else "",
-                row.get(c_huisnr) if c_huisnr else "",
-                row.get(c_huisnr_toev) if c_huisnr_toev else "",
-            )
+            adres = _compose_address(straat, huisnummer, huisnummer_toevoeging)
         postcode = _safe_str(row.get(c_postcode)) if c_postcode else ""
         plaats = _safe_str(row.get(c_plaats)) if c_plaats else ""
         telefoon = _first_nonempty(
@@ -287,7 +340,10 @@ def import_excel(
 
         merk = _safe_str(row.get(c_merk)) if c_merk else ""
         model = _safe_str(row.get(c_model)) if c_model else ""
+        if not model and c_model_fallback:
+            model = _safe_str(row.get(c_model_fallback))
         type_model = _safe_str(row.get(c_type)) if c_type else ""
+        occasion = _normalize_occasion(row.get(c_occasion) if c_occasion else "")
 
         if not _row_has_import_data([klantnaam, adres, postcode, plaats, email, telefoon, kenteken, merk, model, chassisnummer]):
             continue
@@ -302,7 +358,7 @@ def import_excel(
             except Exception:
                 raw_kt = ""
 
-        relatie_geslacht = _safe_str(row.get(c_relatie_geslacht)) if c_relatie_geslacht else ""
+        relatie_geslacht = _normalize_relatie_geslacht_code(row.get(c_relatie_geslacht) if c_relatie_geslacht else "")
         klant_type = _infer_klant_type(klantnaam, raw_kt, relatie_geslacht)
 
         voertuig_type = (_safe_str(row.get(c_voertuigtype)) if c_voertuigtype else "personenauto").lower().strip()
@@ -345,7 +401,12 @@ def import_excel(
         rows.append(
             {
                 "klantnaam": klantnaam,
+                "created_at": row_created_at,
+                "verkoper": verkoper,
                 "relatie_geslacht": relatie_geslacht,
+                "straat": straat,
+                "huisnummer": huisnummer,
+                "huisnummer_toevoeging": huisnummer_toevoeging,
                 "adres": adres,
                 "postcode": postcode,
                 "plaats": plaats,
@@ -357,6 +418,7 @@ def import_excel(
                 "merk": merk,
                 "model": model,
                 "type_model": type_model,
+                "occasion": occasion,
                 "klant_type": klant_type,
                 "voertuig_type": voertuig_type,
                 "bouwjaar": bouwjaar_val,
@@ -391,7 +453,12 @@ def import_excel(
             processed += 1
 
             klantnaam = r["klantnaam"]
+            offer_created_at = r["created_at"]
+            verkoper = r["verkoper"]
             relatie_geslacht = r["relatie_geslacht"]
+            straat = r["straat"]
+            huisnummer = r["huisnummer"]
+            huisnummer_toevoeging = r["huisnummer_toevoeging"]
             adres = r["adres"]
             postcode = r["postcode"]
             plaats = r["plaats"]
@@ -403,6 +470,7 @@ def import_excel(
             merk = r["merk"]
             model = r["model"]
             type_model = r["type_model"]
+            occasion = r["occasion"]
             klant_type = r["klant_type"]
             voertuig_type = r["voertuig_type"]
             bouwjaar_val = r["bouwjaar"]
@@ -432,9 +500,10 @@ def import_excel(
                 """
                 INSERT INTO offers (
                     offer_no, created_at, month_key, batch_id,
-                    klantnaam, relatie_geslacht, adres, postcode, plaats, telefoon, email,
+                    klantnaam, relatie_geslacht, straat, huisnummer, huisnummer_toevoeging,
+                    adres, postcode, plaats, telefoon, email,
                     kenteken, chassisnummer, meldcode, merk, model, type_model,
-                    klant_type, voertuig_type,
+                    occasion, klant_type, voertuig_type,
                     bouwjaar, regio, dekking, benodigde_svj,
                     delivery_method, delivery_status,
                     is_blocked, block_reason, block_note,
@@ -442,9 +511,10 @@ def import_excel(
                     mail_template_type
                 ) VALUES (
                     %s, %s, %s, %s,
-                    %s, %s, %s, %s, %s, %s, %s,
+                    %s, %s, %s, %s, %s,
+                    %s, %s, %s, %s, %s,
                     %s, %s, %s, %s, %s, %s,
-                    %s, %s,
+                    %s, %s, %s,
                     %s, %s, %s, %s,
                     %s, %s,
                     %s, %s, %s,
@@ -454,11 +524,14 @@ def import_excel(
                 """,
                 (
                     offer_no,
-                    created_at,
+                    offer_created_at,
                     mk,
                     batch,
                     klantnaam,
                     relatie_geslacht,
+                    straat,
+                    huisnummer,
+                    huisnummer_toevoeging,
                     adres,
                     postcode,
                     plaats,
@@ -470,6 +543,7 @@ def import_excel(
                     merk,
                     model,
                     type_model,
+                    occasion,
                     klant_type,
                     voertuig_type,
                     bouwjaar_val,
@@ -483,6 +557,18 @@ def import_excel(
                     block_note,
                     _followup_due(today),
                 ),
+            )
+            normalized = normalize_person_name(klantnaam)
+            print(
+                "IMPORT LEAD:",
+                {
+                    "offer_no": offer_no,
+                    "klantnaam_origineel": klantnaam,
+                    "klantnaam_genormaliseerd": normalized.get("display", klantnaam),
+                    "relatie_geslacht": relatie_geslacht,
+                    "chassisnummer": chassisnummer,
+                    "formaat": import_format,
+                },
             )
 
         conn.commit()

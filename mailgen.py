@@ -283,13 +283,17 @@ def normalize_person_name(raw_name: str) -> dict[str, str]:
     }
 
 
+def normalize_customer_name(raw_name: str) -> dict[str, str]:
+    return normalize_person_name(raw_name)
+
+
 def salutation_from_relatie_geslacht(relatie_geslacht: str | None, raw_name: str | None = None) -> str:
     s = _clean_spaces(relatie_geslacht or "").lower()
     if s in {"v", "vrouw", "mevrouw", "mevr", "mw"}:
         return "mevrouw"
     if s in {"m", "h", "man", "heer", "dhr", "de heer"}:
         return "heer"
-    if s in {"o", "onbekend", "unknown", "bedrijf", "zakelijk", "org", "organisatie"}:
+    if s in {"o", "z", "onbekend", "unknown", "bedrijf", "zakelijk", "org", "organisatie"}:
         return "heer/mevrouw"
 
     low_name = (raw_name or "").lower()
@@ -298,6 +302,15 @@ def salutation_from_relatie_geslacht(relatie_geslacht: str | None, raw_name: str
     if re.search(r"\b(dhr|de\s+heer|heer)\b\.?", low_name):
         return "heer"
     return "heer/mevrouw"
+
+
+def filename_salutation_from_relatie_geslacht(relatie_geslacht: str | None, raw_name: str | None = None) -> str:
+    aanhef = salutation_from_relatie_geslacht(relatie_geslacht, raw_name)
+    if aanhef == "heer":
+        return "de heer"
+    if aanhef == "mevrouw":
+        return "mevrouw"
+    return "de heer/mevrouw"
 
 
 def split_dealer_customer_name(naam: str) -> tuple[str, str]:

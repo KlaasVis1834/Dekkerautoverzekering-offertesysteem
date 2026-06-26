@@ -58,9 +58,6 @@ app.config["TEMPLATES_AUTO_RELOAD"] = True
 app.jinja_env.auto_reload = True
 app.config["SEND_FILE_MAX_AGE_DEFAULT"] = 0
 app.config["SESSION_COOKIE_NAME"] = "dekker_portaal_session"
-app.config["SESSION_COOKIE_HTTPONLY"] = True
-app.config["SESSION_COOKIE_SAMESITE"] = "Lax"
-app.config["SESSION_COOKIE_SECURE"] = True
 app.config["PERMANENT_SESSION_LIFETIME"] = timedelta(minutes=15)
 app.config["SESSION_REFRESH_EACH_REQUEST"] = True
 
@@ -75,6 +72,11 @@ if secret_key:
 else:
     app.secret_key = secrets.token_hex(32)
     print("SECURITY WARNING: SECRET_KEY ontbreekt; tijdelijke veilige key gegenereerd. Zet SECRET_KEY in Render.")
+
+app.config["SESSION_COOKIE_HTTPONLY"] = True
+app.config["SESSION_COOKIE_SAMESITE"] = "Lax"
+app.config["SESSION_PERMANENT"] = False
+app.config["SESSION_COOKIE_SECURE"] = True
 
 
 @app.before_request
@@ -134,7 +136,7 @@ def enforce_session_timeout():
 
 @app.after_request
 def add_no_cache_headers(response):
-    response.headers["Cache-Control"] = "private, no-store, no-cache, must-revalidate, max-age=0, s-maxage=0"
+    response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0, s-maxage=0"
     response.headers["CDN-Cache-Control"] = "no-store"
     response.headers["Cloudflare-CDN-Cache-Control"] = "no-store"
     response.headers["Pragma"] = "no-cache"
@@ -778,7 +780,7 @@ def login():
             session["last_activity"] = now_ts
             session.modified = True
 
-            return redirect(url_for("dashboard"))
+            return redirect(url_for("dashboard", _ts=int(time.time())))
 
         flash("Ongeldige gebruikersnaam of wachtwoord.", "error")
 
@@ -800,9 +802,11 @@ def logout():
     session.clear()
     session.modified = True
 
-    response = redirect(url_for("login"))
+    response = redirect(url_for("login", _ts=int(time.time())))
+    cookie_name = app.config.get("SESSION_COOKIE_NAME", "session")
+    response.delete_cookie(cookie_name)
     expire_session_cookies(response)
-    response.headers["Cache-Control"] = "private, no-store, no-cache, must-revalidate, max-age=0, s-maxage=0"
+    response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
     response.headers["Pragma"] = "no-cache"
     response.headers["Expires"] = "0"
     response.headers["Clear-Site-Data"] = '"cache"'

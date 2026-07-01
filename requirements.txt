@@ -2,6 +2,7 @@ flask
 gunicorn
 pandas
 openpyxl
+xlrd
 reportlab
 python-docx
 jinja2

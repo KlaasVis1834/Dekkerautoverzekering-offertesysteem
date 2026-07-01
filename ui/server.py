@@ -30,8 +30,10 @@ from flask import (
     flash, send_file, jsonify, session,
 )
 from werkzeug.security import generate_password_hash, check_password_hash
+from werkzeug.utils import secure_filename
 
 from importers import import_excel, get_last_batch_id
+from orderboek_converter import convert_orderboek
 from outlook_msg import write_msg_outlook
 from voertuigdata import get_vehicle_info
 from rules import bepaal_dekking
@@ -1691,6 +1693,96 @@ def import_page():
         denylist_present=fixed_deny.exists(),
         denylist_path=safe_relpath(fixed_deny) if fixed_deny.exists() else None,
     )
+
+
+def _orderboek_converter_dir() -> Path:
+    return PROJECT_ROOT / "data" / "orderboek_converter"
+
+
+def _cleanup_orderboek_converter_dir(max_age_seconds: int = 24 * 60 * 60) -> None:
+    base = _orderboek_converter_dir()
+    if not base.exists():
+        return
+
+    cutoff = time.time() - max_age_seconds
+    for p in base.iterdir():
+        try:
+            if p.is_file() and p.stat().st_mtime < cutoff:
+                p.unlink()
+        except Exception:
+            pass
+
+
+@app.route("/orderboek-converter", methods=["GET", "POST"])
+@login_required
+def orderboek_converter_page():
+    converter_dir = _orderboek_converter_dir()
+    converter_dir.mkdir(parents=True, exist_ok=True)
+    _cleanup_orderboek_converter_dir()
+
+    summary = None
+    download_name = None
+
+    if request.method == "POST":
+        upload = (
+            request.files.get("orderboek")
+            or request.files.get("excel")
+            or request.files.get("file")
+            or request.files.get("upload")
+        )
+
+        if not upload or not (upload.filename or "").strip():
+            flash("Kies een Excelbestand om te converteren.", "error")
+            return redirect(url_for_fresh("orderboek_converter_page"))
+
+        original_name = secure_filename(upload.filename or "orderboek.xlsx")
+        if not original_name.lower().endswith((".xlsx", ".xls")):
+            flash("Upload alleen een Excelbestand (.xlsx of .xls).", "error")
+            return redirect(url_for_fresh("orderboek_converter_page"))
+
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        upload_path = converter_dir / f"{timestamp}_{original_name}"
+        stem = Path(original_name).stem or "orderboek"
+        output_name = secure_filename(f"{stem}_geconverteerd.xlsx")
+        output_path = converter_dir / f"{timestamp}_{output_name}"
+        remove_duplicates = request.form.get("remove_duplicates") == "on"
+
+        try:
+            upload.save(upload_path)
+            summary = convert_orderboek(upload_path, output_path, remove_duplicates=remove_duplicates)
+            download_name = output_path.name
+            flash("Orderboek succesvol geconverteerd.", "ok")
+        except Exception as e:
+            print("ORDERBOEK CONVERTER FOUT:", type(e).__name__)
+            flash(f"Converteren mislukt: {type(e).__name__}: {e}", "error")
+        finally:
+            try:
+                if upload_path.exists():
+                    upload_path.unlink()
+            except Exception:
+                pass
+
+    return render_template(
+        "orderboek_converter.html",
+        summary=summary,
+        download_name=download_name,
+    )
+
+
+@app.get("/orderboek-converter/download/<path:filename>")
+@login_required
+def orderboek_converter_download(filename: str):
+    safe_name = secure_filename(filename)
+    base = _orderboek_converter_dir().resolve()
+    abs_path = (base / safe_name).resolve()
+
+    if not abs_path.exists() or abs_path.parent != base:
+        flash("Downloadbestand niet gevonden.", "error")
+        return redirect(url_for_fresh("orderboek_converter_page"))
+
+    public_name = re.sub(r"^\d{8}_\d{6}_", "", safe_name)
+    return send_file(abs_path, as_attachment=True, download_name=public_name or safe_name)
+
 
 @app.route("/offers")
 @login_required

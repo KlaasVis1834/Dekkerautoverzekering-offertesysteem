@@ -1,0 +1,79 @@
+{% extends "base.html" %}
+{% block content %}
+
+<h1 style="margin:0 0 12px 0;">Orderboek converter</h1>
+
+<div class="card">
+  <h2 style="margin:0 0 10px 0;">Orderboekbestand converteren</h2>
+  <p style="margin:0 0 12px 0; color:#555;">
+    Upload een orderboekbestand (.xls of .xlsx). De converter maakt een nieuw Excelbestand met de vaste kolommen voor klantgegevens.
+    Er wordt niets in de database geïmporteerd.
+  </p>
+
+  <form method="post" action="{{ url_for('orderboek_converter_page') }}" enctype="multipart/form-data">
+    <div style="display:grid; gap:12px; grid-template-columns:1fr; max-width:720px;">
+      <div>
+        <label style="font-weight:700; display:block; margin-bottom:6px;">Excelbestand</label>
+        <input type="file" name="orderboek" accept=".xls,.xlsx" required />
+      </div>
+
+      <label style="display:flex; align-items:center; gap:8px; font-weight:700;">
+        <input type="checkbox" name="remove_duplicates" style="min-width:0; width:auto;" />
+        Dubbele klanten verwijderen
+      </label>
+
+      <div style="display:flex; gap:10px; align-items:center; margin-top:6px;">
+        <button class="btn primary" type="submit">Converteren</button>
+        <a class="btn" href="{{ url_for('dashboard') }}">Terug naar dashboard</a>
+      </div>
+    </div>
+  </form>
+</div>
+
+{% if summary %}
+  <div class="card" style="margin-top:14px;">
+    <div class="row" style="justify-content:space-between; align-items:flex-start;">
+      <div>
+        <h2 style="margin:0 0 10px 0;">Samenvatting</h2>
+        <table>
+          <tbody>
+            <tr>
+              <th>Aantal ingelezen regels</th>
+              <td>{{ summary.imported_rows }}</td>
+            </tr>
+            <tr>
+              <th>Aantal geëxporteerde regels</th>
+              <td>{{ summary.exported_rows }}</td>
+            </tr>
+            <tr>
+              <th>Aantal ontbrekende kolommen</th>
+              <td>{{ summary.missing_columns_count }}</td>
+            </tr>
+            <tr>
+              <th>Aantal dubbele regels verwijderd</th>
+              <td>{{ summary.duplicates_removed }}</td>
+            </tr>
+            <tr>
+              <th>Aantal ontbrekende chassisnummers</th>
+              <td>{{ summary.missing_chassis_count }}</td>
+            </tr>
+          </tbody>
+        </table>
+
+        {% if summary.missing_columns %}
+          <p class="muted small" style="margin:10px 0 0 0;">
+            Ontbrekende kolommen: {{ summary.missing_columns }}
+          </p>
+        {% endif %}
+      </div>
+
+      {% if download_name %}
+        <a class="btn ok" href="{{ url_for('orderboek_converter_download', filename=download_name) }}">
+          Download geconverteerd bestand
+        </a>
+      {% endif %}
+    </div>
+  </div>
+{% endif %}
+
+{% endblock %}

@@ -44,8 +44,23 @@ def _first_nonempty(*values) -> str:
 
 
 def _compose_address(street: str, house_no: str, house_addition: str) -> str:
-    parts = [_safe_str(street), _safe_str(house_no), _safe_str(house_addition)]
+    parts = [_safe_str(street), clean_house_number(house_no), _safe_str(house_addition)]
     return " ".join(part for part in parts if part).strip()
+
+
+def clean_house_number(value) -> str:
+    s = _safe_str(value)
+    if not s:
+        return ""
+    if re.fullmatch(r"\d+\.0", s):
+        return s[:-2]
+    try:
+        number = float(s)
+        if number.is_integer():
+            return str(int(number))
+    except Exception:
+        pass
+    return s
 
 
 def _row_has_import_data(values: list[str]) -> bool:
@@ -318,7 +333,7 @@ def import_excel(
         row_created_at = _format_created_at(row.get(c_orderdatum) if c_orderdatum else None, created_at)
         verkoper = _safe_str(row.get(c_verkoper)) if c_verkoper else ""
         straat = _safe_str(row.get(c_straat)) if c_straat else ""
-        huisnummer = _safe_str(row.get(c_huisnr)) if c_huisnr else ""
+        huisnummer = clean_house_number(row.get(c_huisnr)) if c_huisnr else ""
         huisnummer_toevoeging = _safe_str(row.get(c_huisnr_toev)) if c_huisnr_toev else ""
         adres = _safe_str(row.get(c_adres)) if c_adres else ""
         if not adres:

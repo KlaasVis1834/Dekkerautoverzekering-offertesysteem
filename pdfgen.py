@@ -736,9 +736,6 @@ def generate_offer_pdf(
     _link(c, margin_x + 34 * mm, y, aanvraag_url, aanvraag_url, size=9.5)
     y -= 10 * mm
 
-    c.setStrokeColor(colors.HexColor("#D9DEE7"))
-    c.line(margin_x, 30 * mm, w - margin_x, 30 * mm)
-
     c.setFillColor(colors.HexColor("#1F2A44"))
     c.setFont("Helvetica-Bold", 9.5)
     c.drawString(margin_x, 24.5 * mm, "Polisvoorwaarden & verzekeringskaarten:")

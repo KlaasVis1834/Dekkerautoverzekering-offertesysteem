@@ -1485,9 +1485,10 @@ def _klant_display_for_filename(
     kn = (klantnaam or "").strip()
     normalized = normalize_person_name(kn)
     display_name = normalized["display"] or kn
+    rg = (relatie_geslacht or "").strip().upper()
 
-    if kt == "zakelijk":
-        return " ".join([p for p in ["de heer/mevrouw", kn] if p]).strip()
+    if kt == "zakelijk" or rg == "Z":
+        return kn or display_name
 
     aanhef = filename_salutation_from_relatie_geslacht(relatie_geslacht, kn)
     return " ".join([p for p in [aanhef, display_name] if p]).strip() or kn

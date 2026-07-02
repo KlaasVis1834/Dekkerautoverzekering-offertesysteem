@@ -63,6 +63,26 @@ def clean_house_number(value) -> str:
     return s
 
 
+def clean_phone(value) -> str:
+    s = _safe_str(value)
+    if not s:
+        return ""
+
+    if re.fullmatch(r"\d+\.0", s):
+        s = s[:-2]
+
+    s = re.sub(r"[\s\-\(\)]", "", s)
+    if s.startswith("+31"):
+        s = "0" + s[3:]
+    elif s.startswith("0031"):
+        s = "0" + s[4:]
+
+    digits = re.sub(r"\D", "", s)
+    if len(digits) == 9 and not digits.startswith("0"):
+        digits = "0" + digits
+    return digits
+
+
 def _row_has_import_data(values: list[str]) -> bool:
     return any(_safe_str(value) for value in values)
 
@@ -369,9 +389,9 @@ def import_excel(
         postcode = _safe_str(row.get(c_postcode)) if c_postcode else ""
         plaats = _safe_str(row.get(c_plaats)) if c_plaats else ""
         telefoon = _first_nonempty(
-            row.get(c_tel_mobiel) if c_tel_mobiel else "",
-            row.get(c_tel_prive) if c_tel_prive else "",
-            row.get(c_tel) if c_tel else "",
+            clean_phone(row.get(c_tel_mobiel)) if c_tel_mobiel else "",
+            clean_phone(row.get(c_tel_prive)) if c_tel_prive else "",
+            clean_phone(row.get(c_tel)) if c_tel else "",
         )
         email = _safe_str(row.get(c_email)) if c_email else ""
 

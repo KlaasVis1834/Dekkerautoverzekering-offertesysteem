@@ -5,6 +5,7 @@ from pathlib import Path
 from typing import Any
 
 import pandas as pd
+from openpyxl import load_workbook
 
 
 EXPORT_COLUMNS = [
@@ -116,9 +117,20 @@ def clean_phone(value: Any) -> str:
     s = _safe_str(value)
     if not s:
         return ""
-    prefix = "+" if s.startswith("+") else ""
+
+    if re.fullmatch(r"\d+\.0", s):
+        s = s[:-2]
+
+    s = re.sub(r"[\s\-\(\)]", "", s)
+    if s.startswith("+31"):
+        s = "0" + s[3:]
+    elif s.startswith("0031"):
+        s = "0" + s[4:]
+
     digits = re.sub(r"\D", "", s)
-    return prefix + digits
+    if len(digits) == 9 and not digits.startswith("0"):
+        digits = "0" + digits
+    return digits
 
 
 def clean_postcode(value: Any) -> str:
@@ -190,6 +202,29 @@ def _remove_duplicate_customers(out: pd.DataFrame) -> tuple[pd.DataFrame, int]:
     return out.loc[keep_indexes].reset_index(drop=True), duplicates
 
 
+def _write_orderboek_excel(out: pd.DataFrame, output_path: Path) -> None:
+    out.to_excel(output_path, index=False)
+
+    wb = load_workbook(output_path)
+    ws = wb.active
+    text_columns = {"Relatie tel prive", "Relatie mobiel"}
+    header_indexes = {
+        str(cell.value or ""): cell.column
+        for cell in ws[1]
+    }
+
+    for header in text_columns:
+        column_idx = header_indexes.get(header)
+        if not column_idx:
+            continue
+        for row_idx in range(2, ws.max_row + 1):
+            cell = ws.cell(row=row_idx, column=column_idx)
+            cell.number_format = "@"
+            cell.value = "" if cell.value is None else str(cell.value)
+
+    wb.save(output_path)
+
+
 def convert_orderboek(
     file_path: str | Path,
     output_path: str | Path,
@@ -208,7 +243,7 @@ def convert_orderboek(
 
     output_path = Path(output_path)
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    out.to_excel(output_path, index=False)
+    _write_orderboek_excel(out, output_path)
 
     return {
         "imported_rows": imported_rows,

@@ -71,20 +71,48 @@ def _normalize_header(header: str) -> str:
     return re.sub(r"[^a-z0-9]+", "", _safe_str(header).lower())
 
 
+NEW_EXCEL_REQUIRED_HEADERS = {"relatie", "datumverkoop"}
+CONVERTED_ORDERBOEK_REQUIRED_HEADERS = {
+    "relatie",
+    "kenteken",
+    "merk",
+    "autoomschrijving",
+    "chassisnummer",
+    "relatiegeslacht",
+}
+OLD_EXCEL_REQUIRED_HEADERS = {"klantnaam", "orderdatum"}
+
+
+def _normalized_header_set(values) -> set[str]:
+    return {_normalize_header(v) for v in values if _safe_str(v)}
+
+
+def _strip_dataframe_columns(df: pd.DataFrame) -> pd.DataFrame:
+    df = df.copy()
+    df.columns = [_safe_str(c) for c in df.columns]
+    return df
+
+
 def _read_excel_with_detected_header(excel_path: str) -> pd.DataFrame:
     preview = pd.read_excel(excel_path, header=None, nrows=12)
     for idx, row in preview.iterrows():
-        normalized = {_normalize_header(v) for v in row.tolist() if _safe_str(v)}
-        if {"relatie", "datumverkoop"}.issubset(normalized) or {"klantnaam", "orderdatum"}.issubset(normalized):
-            return pd.read_excel(excel_path, header=int(idx))
-    return pd.read_excel(excel_path)
+        normalized = _normalized_header_set(row.tolist())
+        if (
+            NEW_EXCEL_REQUIRED_HEADERS.issubset(normalized)
+            or CONVERTED_ORDERBOEK_REQUIRED_HEADERS.issubset(normalized)
+            or OLD_EXCEL_REQUIRED_HEADERS.issubset(normalized)
+        ):
+            return _strip_dataframe_columns(pd.read_excel(excel_path, header=int(idx)))
+    return _strip_dataframe_columns(pd.read_excel(excel_path))
 
 
 def _detect_import_format(df: pd.DataFrame) -> str:
-    normalized = {_normalize_header(c) for c in df.columns}
-    if {"relatie", "datumverkoop"}.issubset(normalized):
+    normalized = _normalized_header_set(df.columns)
+    if NEW_EXCEL_REQUIRED_HEADERS.issubset(normalized):
         return "nieuw"
-    if {"klantnaam", "orderdatum"}.issubset(normalized):
+    if CONVERTED_ORDERBOEK_REQUIRED_HEADERS.issubset(normalized):
+        return "nieuw"
+    if OLD_EXCEL_REQUIRED_HEADERS.issubset(normalized):
         return "oud"
     raise ValueError("Onbekend Excel-formaat. Controleer kolomnamen.")
 

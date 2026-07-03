@@ -1,0 +1,57 @@
+{% extends "base.html" %}
+{% block content %}
+
+<div class="card">
+  <h1 style="margin:0 0 10px 0;">Export laatste batch</h1>
+  <p class="muted" style="margin:0 0 14px 0;">
+    De export wordt in kleine stappen verwerkt zodat de server niet halverwege stopt.
+  </p>
+
+  <div class="grid grid-4">
+    <div class="kpi">
+      <div>
+        <div class="t">Verwerkt</div>
+        <div class="n">{{ processed_total }}</div>
+      </div>
+    </div>
+    <div class="kpi">
+      <div>
+        <div class="t">Nog te gaan</div>
+        <div class="n">{{ remaining }}</div>
+      </div>
+    </div>
+    <div class="kpi">
+      <div>
+        <div class="t">E-mail</div>
+        <div class="n">{{ mails_total }}</div>
+      </div>
+    </div>
+    <div class="kpi">
+      <div>
+        <div class="t">Post</div>
+        <div class="n">{{ posts_total }}</div>
+      </div>
+    </div>
+  </div>
+
+  <form id="continueExportForm" method="post" action="{{ url_for('export_last_batch') }}" style="margin-top:14px;">
+    <input type="hidden" name="processed_total" value="{{ processed_total }}">
+    <input type="hidden" name="mails_total" value="{{ mails_total }}">
+    <input type="hidden" name="posts_total" value="{{ posts_total }}">
+    <div class="row">
+      <button class="btn primary" type="submit">Verder verwerken</button>
+      <a class="btn" href="{{ url_for('offers', delivery='all', batch=batch_id) }}">Naar offertes</a>
+    </div>
+  </form>
+</div>
+
+<script>
+  window.setTimeout(function () {
+    var form = document.getElementById("continueExportForm");
+    if (form) {
+      form.submit();
+    }
+  }, 600);
+</script>
+
+{% endblock %}

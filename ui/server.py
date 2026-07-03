@@ -56,6 +56,17 @@ from bonus import herbereken_premie_op_svj
 AANVRAAG_LINK = "https://www.klaasvis.nl/aanvraagformulier/"
 AANVRAAG_API_SECRET = os.environ.get("AANVRAAG_API_SECRET", "").strip()
 
+
+def _env_int(name: str, default: int, minimum: int, maximum: int) -> int:
+    try:
+        value = int(os.environ.get(name, str(default)))
+    except Exception:
+        value = default
+    return max(minimum, min(maximum, value))
+
+
+EXPORT_LAST_BATCH_CHUNK_SIZE = _env_int("EXPORT_LAST_BATCH_CHUNK_SIZE", 3, 1, 10)
+
 app = Flask(__name__)
 app.config["TEMPLATES_AUTO_RELOAD"] = True
 app.jinja_env.auto_reload = True
@@ -3497,15 +3508,28 @@ def export_last_batch():
     mails = 0
     posts = 0
     errors = 0
-    msg_rows = []
-    post_rows = []
+    processed_total = _parse_int(request.form.get("processed_total")) or 0
+    mails_total = _parse_int(request.form.get("mails_total")) or 0
+    posts_total = _parse_int(request.form.get("posts_total")) or 0
 
     with connect() as conn:
+        remaining_before = conn.execute(
+            """
+            SELECT COUNT(*) AS c
+            FROM offers
+            WHERE is_blocked = 0
+              AND batch_id = %s
+              AND COALESCE(delivery_status, 'nieuw') = 'nieuw'
+            """,
+            (batch_id,),
+        ).fetchone()["c"]
+
         rows = conn.execute(
             """
             SELECT * FROM offers
             WHERE is_blocked = 0
               AND batch_id = %s
+              AND COALESCE(delivery_status, 'nieuw') = 'nieuw'
             ORDER BY
                 CASE
                     WHEN COALESCE(offer_pdf_path,'')='' AND COALESCE(eml_path,'')='' AND COALESCE(post_letter_path,'')=''
@@ -3515,8 +3539,9 @@ def export_last_batch():
                 COALESCE(regio, 999) ASC,
                 created_at DESC,
                 offer_no DESC
+            LIMIT %s
             """,
-            (batch_id,),
+            (batch_id, EXPORT_LAST_BATCH_CHUNK_SIZE),
         ).fetchall()
 
         for r in rows:
@@ -3526,24 +3551,8 @@ def export_last_batch():
 
                 if info["kind"] == "email":
                     mails += 1
-                    msg_rows.append(
-                        {
-                            "offer_no": r["offer_no"],
-                            "klantnaam": r["klantnaam"] or "",
-                            "email": (r["email"] or "").strip(),
-                            "msg_path": info.get("msg"),
-                            "pdf_path": info["pdf"],
-                        }
-                    )
                 else:
                     posts += 1
-                    post_rows.append(
-                        {
-                            "offer_no": r["offer_no"],
-                            "klantnaam": r["klantnaam"] or "",
-                            "post_letter_path": info["post"],
-                        }
-                    )
             except Exception as e:
                 errors += 1
                 print(f"Export fout bij {r['offer_no']}:", repr(e))
@@ -3551,10 +3560,48 @@ def export_last_batch():
 
         conn.commit()
 
+        remaining_after = conn.execute(
+            """
+            SELECT COUNT(*) AS c
+            FROM offers
+            WHERE is_blocked = 0
+              AND batch_id = %s
+              AND COALESCE(delivery_status, 'nieuw') = 'nieuw'
+            """,
+            (batch_id,),
+        ).fetchone()["c"]
+
+    processed_total += processed
+    mails_total += mails
+    posts_total += posts
+
     if errors:
-        flash(f"Export deels gelukt: {processed} verwerkt, {errors} fout(en). Zie Render logs.", "error")
+        flash(
+            f"Export deels gelukt: {processed_total} verwerkt, {errors} fout(en). Zie Render logs.",
+            "error",
+        )
+        return redirect_fresh(url_for("offers", delivery="all"))
+
+    if remaining_after > 0:
+        return render_template(
+            "batch_export_progress.html",
+            batch_id=batch_id,
+            processed_total=processed_total,
+            mails_total=mails_total,
+            posts_total=posts_total,
+            remaining=remaining_after,
+            chunk_size=EXPORT_LAST_BATCH_CHUNK_SIZE,
+        )
+
+    if processed_total:
+        flash(
+            f"Export gelukt: {processed_total} verwerkt ({mails_total} e-mail, {posts_total} post).",
+            "ok",
+        )
+    elif remaining_before == 0:
+        flash("Geen nieuwe offertes in de laatste batch om te exporteren.", "ok")
     else:
-        flash(f"Export gelukt: {processed} verwerkt.", "ok")
+        flash("Geen offertes verwerkt.", "error")
 
     return redirect_fresh(url_for("offers", delivery="all"))
 

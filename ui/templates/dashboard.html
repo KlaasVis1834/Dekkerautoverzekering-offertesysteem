@@ -62,6 +62,63 @@
 <div class="card">
   <div class="row" style="justify-content:space-between; flex-wrap:wrap; gap:12px;">
     <div>
+      <h3 style="margin:0">Automatische verwerking</h3>
+      <div class="muted small">
+        Inbox-map: <b>{{ auto_workflow.inbox_path if auto_workflow else 'data/auto_import/inbox' }}</b>
+      </div>
+      <div class="muted small">
+        Wachtende bestanden:
+        <b>{{ auto_workflow.pending_files if auto_workflow else 0 }}</b>
+      </div>
+      {% if auto_workflow and auto_workflow.last_job %}
+        <div class="muted small">
+          Laatste job:
+          <b>{{ auto_workflow.last_job.status }}</b>
+          {% if auto_workflow.last_job.imported_count is not none %}
+            - {{ auto_workflow.last_job.imported_count }} leads
+          {% endif %}
+          {% if auto_workflow.last_job.completed_at %}
+            - {{ auto_workflow.last_job.completed_at }}
+          {% endif %}
+        </div>
+        {% if auto_workflow.last_job.error_message %}
+          <div class="muted small">
+            Fout: <b>{{ auto_workflow.last_job.error_message }}</b>
+          </div>
+        {% endif %}
+      {% endif %}
+      {% if auto_workflow and auto_workflow.error %}
+        <div class="muted small">
+          Workflowstatus: <b>{{ auto_workflow.error }}</b>
+        </div>
+      {% endif %}
+    </div>
+
+    <div class="row" style="flex-wrap:wrap;">
+      <form method="post"
+            action="{{ url_for('auto_workflow_import') }}"
+            style="display:inline;">
+        <button class="btn primary" type="submit">
+          Nieuwe bestanden ophalen/importeren
+        </button>
+      </form>
+
+      <form method="post"
+            action="{{ url_for('export_last_batch') }}"
+            style="display:inline;">
+        <button class="btn ok" type="submit">
+          Laatste batch exporteren naar concepten
+        </button>
+      </form>
+    </div>
+  </div>
+</div>
+
+<div style="height:14px"></div>
+
+<div class="card">
+  <div class="row" style="justify-content:space-between; flex-wrap:wrap; gap:12px;">
+    <div>
       <h3 style="margin:0">Acties</h3>
 
       <div class="muted small">

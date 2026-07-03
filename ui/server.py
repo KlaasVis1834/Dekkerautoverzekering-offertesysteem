@@ -33,6 +33,7 @@ from werkzeug.security import generate_password_hash, check_password_hash
 from werkzeug.utils import secure_filename
 
 from importers import import_excel, get_last_batch_id
+from auto_workflow import get_auto_workflow_summary, process_auto_import_folder
 from orderboek_converter import convert_orderboek
 from outlook_msg import write_msg_outlook
 from voertuigdata import get_vehicle_info
@@ -645,6 +646,12 @@ def ensure_db():
             ("np_cataloguswaarde_part", "TEXT"),
             ("np_cataloguswaarde_zak", "TEXT"),
             ("graph_message_id", "TEXT"),
+            ("premie_status", "TEXT DEFAULT 'nog_niet_opgehaald'"),
+            ("premie_opgehaald_at", "TEXT"),
+            ("premie_foutmelding", "TEXT"),
+            ("auto_workflow_status", "TEXT"),
+            ("auto_workflow_last_step", "TEXT"),
+            ("auto_workflow_error", "TEXT"),
         ]:
             _ensure_column(conn, "offers", col, ddl)
 
@@ -701,6 +708,33 @@ def ensure_db():
             ("revoked_at", "TEXT"),
         ]:
             _ensure_column(conn, "user_sessions", col, ddl)
+
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS imported_files (
+                id SERIAL PRIMARY KEY,
+                filename TEXT,
+                file_hash TEXT UNIQUE,
+                batch_id TEXT,
+                imported_at TEXT
+            )
+            """
+        )
+
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS auto_import_jobs (
+                id SERIAL PRIMARY KEY,
+                filename TEXT,
+                batch_id TEXT,
+                status TEXT,
+                imported_count INTEGER,
+                error_message TEXT,
+                created_at TEXT,
+                completed_at TEXT
+            )
+            """
+        )
 
         conn.execute(
             """
@@ -1599,6 +1633,8 @@ def dashboard():
         blocked = conn.execute("SELECT COUNT(*) AS c FROM offers WHERE is_blocked = 1").fetchone()["c"]
         new_applications = count_pending_applications(conn)
 
+    auto_workflow = get_auto_workflow_summary()
+
     return render_template(
         "dashboard.html",
         total=total,
@@ -1608,6 +1644,7 @@ def dashboard():
         last_batch_id=last_batch_id,
         denylist_exists=denylist_exists(),
         db_path="Supabase PostgreSQL",
+        auto_workflow=auto_workflow,
     )
 
 
@@ -1616,6 +1653,38 @@ def dashboard():
 def followups():
     flash("Bel-lijst is uitgeschakeld. Je zit nu op Offertes.", "ok")
     return redirect(url_for("offers"))
+
+
+@app.post("/auto-workflow/import")
+@login_required
+def auto_workflow_import():
+    ensure_db()
+    session.pop("_flashes", None)
+    session.modified = True
+
+    try:
+        summary = process_auto_import_folder()
+        if summary["error_files"]:
+            flash(
+                f"Automatische import deels gelukt: {summary['imported_rows']} leads, "
+                f"{summary['error_files']} bestand(en) met fout.",
+                "error",
+            )
+        elif summary["imported_files"]:
+            flash(
+                f"Automatische import gelukt: {summary['imported_rows']} leads uit "
+                f"{summary['imported_files']} bestand(en).",
+                "ok",
+            )
+        elif summary["skipped_files"]:
+            flash("Geen nieuwe leads: bestand(en) waren al eerder geimporteerd.", "ok")
+        else:
+            flash("Geen Excelbestanden gevonden in data/auto_import/inbox.", "ok")
+    except Exception as e:
+        print("AUTO WORKFLOW IMPORT FOUT:", repr(e))
+        flash(f"Automatische import mislukt: {type(e).__name__}: {e}", "error")
+
+    return redirect_fresh(url_for("dashboard"))
 
 
 @app.route("/import", methods=["GET", "POST"])

@@ -8,7 +8,12 @@ import sqlite3
 import re
 
 import requests
+import logging
+from requests.adapters import HTTPAdapter
+from urllib3.util.retry import Retry
 
+
+logger = logging.getLogger(__name__)
 
 RDW_BASE = "https://opendata.rdw.nl/resource"
 DATASET_VOERTUIG = "m9d7-ebf2"   # gekentekende voertuigen
@@ -48,11 +53,25 @@ def _norm_kenteken(k: str) -> str:
 
 
 def _rdw_get(dataset: str, params: dict, timeout: int = 12) -> list[dict]:
+    """RDW lookup met beperkte retries voor tijdelijke storingen."""
     url = f"{RDW_BASE}/{dataset}.json"
-    r = requests.get(url, params=params, timeout=timeout)
-    r.raise_for_status()
-    data = r.json()
-    return data if isinstance(data, list) else []
+    retry = Retry(
+        total=2,
+        connect=2,
+        read=2,
+        backoff_factor=0.4,
+        status_forcelist=(429, 500, 502, 503, 504),
+        allowed_methods=frozenset(("GET",)),
+        respect_retry_after_header=True,
+    )
+    with requests.Session() as session:
+        session.mount("https://", HTTPAdapter(max_retries=retry))
+        response = session.get(url, params=params, timeout=timeout)
+        response.raise_for_status()
+        data = response.json()
+    if not isinstance(data, list):
+        raise ValueError(f"RDW dataset {dataset} returned no list")
+    return data
 
 
 def _pick_first(row: dict, keys: list[str]) -> str:
@@ -256,6 +275,7 @@ def fetch_rdw_by_plate(kenteken: str) -> VoertuigInfo:
     try:
         rows = _rdw_get(DATASET_VOERTUIG, {"kenteken": plate, "$limit": 1})
     except Exception:
+        logger.exception("RDW basisgegevens ophalen mislukt voor kenteken %s", plate)
         rows = []
 
     if rows:
@@ -266,7 +286,7 @@ def fetch_rdw_by_plate(kenteken: str) -> VoertuigInfo:
 
         info.merk = _pick_first(row, ["merk"])
         info.model = _pick_first(row, ["handelsbenaming", "typeaanduiding"])
-        info.bouwjaar = _bouwjaar_from_datestr(_pick_first(row, ["datum_eerste_toelating"]))
+        info.bouwjaar = _bouwjaar_from_datestr(_pick_first(row, ["datum_eerste_toelating", "datum_eerste_toelating_dt", "datum_eerste_tenaamstelling_in_nederland", "datum_eerste_tenaamstelling_in_nederland_dt"]))
 
         info.cataloguswaarde = _pick_first(row, ["catalogusprijs", "cataloguswaarde"])
         info.ledig_gewicht = _pick_first(row, ["massa_ledig_voertuig", "ledig_gewicht", "massa_rijklaar"])
@@ -287,6 +307,7 @@ def fetch_rdw_by_plate(kenteken: str) -> VoertuigInfo:
     try:
         rows_b = _rdw_get(DATASET_BRANDSTOF, {"kenteken": plate, "$limit": 5})
     except Exception:
+        logger.exception("RDW brandstofgegevens ophalen mislukt voor kenteken %s", plate)
         rows_b = []
 
     if rows_b:
@@ -297,10 +318,14 @@ def fetch_rdw_by_plate(kenteken: str) -> VoertuigInfo:
         try:
             rows_m = _rdw_get(DATASET_MASSA, {"kenteken": plate, "$limit": 1})
         except Exception:
+            logger.exception("RDW massadataset ophalen mislukt voor kenteken %s", plate)
             rows_m = []
         if rows_m:
             rm = rows_m[0]
             info.ledig_gewicht = _pick_first(rm, ["massa_ledig_voertuig", "ledig_gewicht", "massa_rijklaar"])
+
+    if not rows:
+        logger.warning("RDW gaf geen basisgegevens terug voor kenteken %s; offertevelden kunnen ontbreken", plate)
 
     # ---- normalisaties ----
     info.merk = _title_case_merk_model(info.merk)
